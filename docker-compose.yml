@@ -1,52 +1,60 @@
 services:
   ## MySQL Docker Compose Config
-  postgres-order:
-    container_name: postgres-order
-    image: postgres
+  mysql-order:
+    container_name: mysql-order
+    image: mysql:8
     environment:
-      POSTGRES_DB: order-service
-      POSTGRES_USER: truongnguyen
-      POSTGRES_PASSWORD: password
-      PGDATA: /data/postgres
-    volumes:
-      - ./postgres-order:/data/postgres
-    expose:
-      - "5431"
+      MYSQL_ROOT_PASSWORD: truongnguyen
+      MYSQL_DATABASE: order-service
     ports:
-      - "5431:5431"
-    command: -p 5431
-    restart: always
+      - "3307:3306"
+    volumes:
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD-SHELL", 'mysql -h localhost -u root -p$$MYSQL_ROOT_PASSWORD -e "USE `$$MYSQL_DATABASE`"' ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 180s
 
-  postgres-inventory:
-    container_name: postgres-inventory
-    image: postgres
+  mysql-product:
+    container_name: mysql-product
+    image: mysql:8
     environment:
-      POSTGRES_DB: inventory-service
-      POSTGRES_USER: truongnguyen
-      POSTGRES_PASSWORD: password
-      PGDATA: /data/postgres
-    volumes:
-      - ./postgres-inventory:/data/postgres
+      MYSQL_ROOT_PASSWORD: truongnguyen
+      MYSQL_DATABASE: product-service
     ports:
-      - "5432:5432"
-    restart: always
+      - "3308:3306"
+    volumes:
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD-SHELL", 'mysql -h localhost -u root -p$$MYSQL_ROOT_PASSWORD -e "USE `$$MYSQL_DATABASE`"' ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 180s
 
-  ## Mongo Docker Compose Config
-  mongo:
-    container_name: mongo
-    image: mongo:4.4.14-rc0-focal
-    restart: always
+  mysql-inventory:
+    container_name: mysql-inventory
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: truongnguyen
+      MYSQL_DATABASE: inventory-service
     ports:
-      - "27017:27017"
-    expose:
-      - "27017"
+      - "3309:3306"
     volumes:
-      - ./mongo-data:/data/db
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: [ "CMD-SHELL", 'mysql -h localhost -u root -p$$MYSQL_ROOT_PASSWORD -e "USE `$$MYSQL_DATABASE`"' ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 180s
 
   ## Keycloak Config with Mysql database
   keycloak-mysql:
     container_name: keycloak-mysql
-    image: mysql:5.7
+    image: mysql:8
     volumes:
       - ./mysql_keycloak_data:/var/lib/mysql
     environment:
@@ -120,8 +128,6 @@ services:
       - management.zipkin.tracing.endpoint=http://zipkin:9411/api/v2/spans
     depends_on:
       - zipkin
-#    networks:
-#      - microservices-net
 
   api-gateway:
     image: truongnguyen3006/api-gateway:latest
@@ -144,41 +150,66 @@ services:
   product-service:
     container_name: product-service
     image: truongnguyen3006/product-service:latest
+    ports:
+      - "8083:8083"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - eureka.client.serviceUrl.defaultZone=http://eureka:password@discovery-server:8761/eureka
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-product:3306/product-service
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: truongnguyen
+      SPRING_JPA_DATABASE-PLATFORM: org.hibernate.dialect.MySQL8Dialect
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:password@discovery-server:8761/eureka
     depends_on:
-      - mongo
-      - discovery-server
-      - api-gateway
+      mysql-product:
+        condition: service_healthy # <-- Sửa ở đây
+      discovery-server:
+        condition: service_started
+      api-gateway:
+        condition: service_started
 
   ## Order-Service Docker Compose Config
   order-service:
     container_name: order-service
     image: truongnguyen3006/order-service:latest
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-order:5431/order-service\
-      - eureka.client.serviceUrl.defaultZone=http://eureka:password@discovery-server:8761/eureka
+      SPRING_PROFILES_ACTIVE: docker
+      # Ghi đè trực tiếp URL của database
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-order:3306/order-service
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: truongnguyen
+      # Ghi đè Dialect để sửa lỗi "Unable to determine Dialect"
+      SPRING_JPA_DATABASE-PLATFORM: org.hibernate.dialect.MySQL8Dialect
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:password@discovery-server:8761/eureka
     depends_on:
-      - postgres-order
-      - broker
-      - zipkin
-      - discovery-server
-      - api-gateway
+      mysql-order:
+        condition: service_healthy # <-- Sửa ở đây
+      broker:
+        condition: service_started
+      zipkin:
+        condition: service_started
+      discovery-server:
+        condition: service_started
+      api-gateway:
+        condition: service_started
 
   ## Inventory-Service Docker Compose Config
   inventory-service:
     container_name: inventory-service
     image: truongnguyen3006/inventory-service:latest
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-inventory:5432/inventory-service
-      - eureka.client.serviceUrl.defaultZone=http://eureka:password@discovery-server:8761/eureka
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql-inventory:3306/inventory-service
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: truongnguyen
+      SPRING_JPA_DATABASE-PLATFORM: org.hibernate.dialect.MySQL8Dialect
+      SPRING_PROFILES_ACTIVE: docker
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:password@discovery-server:8761/eureka
     depends_on:
-      - postgres-inventory
-      - discovery-server
-      - api-gateway
+      mysql-inventory:
+        condition: service_healthy # <-- Sửa ở đây
+      discovery-server:
+          condition: service_started
+      api-gateway:
+          condition: service_started
 
   ## Notification-Service Docker Compose Config
   notification-service:
@@ -202,11 +233,6 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-    depends_on:
-      - product-service
-      - inventory-service
-      - order-service
-      - notification-service
 
   grafana:
     image: grafana/grafana-oss:8.5.2

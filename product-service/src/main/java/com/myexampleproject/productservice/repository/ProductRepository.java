@@ -1,9 +1,9 @@
 package com.myexampleproject.productservice.repository;
 
-import org.springframework.data.mongodb.repository.MongoRepository;
+import org.springframework.data.jpa.repository.JpaRepository;
 
 import com.myexampleproject.productservice.model.Product;
 
-public interface ProductRepository extends MongoRepository<Product, String> {
+public interface ProductRepository extends JpaRepository<Product, String> {
 	
 }
