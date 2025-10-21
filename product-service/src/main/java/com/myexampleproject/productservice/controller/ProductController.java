@@ -2,6 +2,7 @@ package com.myexampleproject.productservice.controller;
 
 import java.util.List;
 
+import com.myexampleproject.productservice.model.Product;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,8 +22,8 @@ public class ProductController {
 	
 	@PostMapping
 	@ResponseStatus(HttpStatus.CREATED)
-	public void createProduct(@RequestBody ProductRequest productRequest) {
-        productService.createProduct(productRequest);
+	public Product createProduct(@RequestBody ProductRequest productRequest) {
+        return productService.createProduct(productRequest);
 	}
 	
 	@GetMapping
@@ -30,4 +31,14 @@ public class ProductController {
 	public List<ProductResponse> getAllProducts(){
 		return productService.getAllProducts();
 	}
+
+    @GetMapping("/{id}")
+    public ProductResponse getProductById(@PathVariable Long id){
+        return productService.getProductById(id);
+    }
+
+    @DeleteMapping("/{id}")
+    public void deleteProductById(@PathVariable Long id){
+        productService.deleteProductById(id);
+    }
 }

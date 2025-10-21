@@ -65,9 +65,9 @@ public class OrderService {
 
             boolean allProductsInStock = Arrays.stream(inventoryResponsesArray)
                     .allMatch(InventoryResponse::isInStock);
+            boolean allProductsExist = (inventoryResponsesArray.length == skuCodes.size());
 
-
-            if(allProductsInStock) {
+            if(allProductsInStock && allProductsExist) {
                 orderRepository.save(order);
                 kafkaTemplate.send("notificationTopic", new OrderPlacedEvent(order.getOrderNumber()));
                 return "Order Placed Successfully";

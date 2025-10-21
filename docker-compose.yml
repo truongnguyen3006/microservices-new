@@ -62,25 +62,40 @@ services:
       MYSQL_DATABASE: keycloak
       MYSQL_USER: keycloak
       MYSQL_PASSWORD: password
+    # healthcheck phải ngang hàng với environment
+    healthcheck:
+      test: [ "CMD-SHELL", "mysqladmin ping -h localhost -u root -proot" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   keycloak:
     container_name: keycloak
     image: quay.io/keycloak/keycloak:18.0.0
-    command: [ "start-dev", "--import-realm" ]
+    command: [ "start-dev" ]
     environment:
-      DB_VENDOR: MYSQL
-      DB_ADDR: keycloak-mysql
-      DB_DATABASE: keycloak
-      DB_USER: keycloak
-      DB_PASSWORD: password
+      KC_DB: mysql # Tên CSDL
+      KC_DB_URL_HOST: keycloak-mysql # Tên service của CSDL
+      KC_DB_DATABASE: keycloak       # Tên database
+      KC_DB_USERNAME: keycloak       # Username
+      KC_DB_PASSWORD: password       # Password
+
+      # SỬA Ở ĐÂY: Biến admin cũng thay đổi
+      KC_ADMIN: admin
+      KC_ADMIN_PASSWORD: admin
+#  bảo" Keycloak rằng địa chỉ công khai của nó là http://localhost:8085.
+      KC_HOSTNAME_URL: http://localhost:8085
+      # THÊM CẢ BIẾN CŨ (Wildfly) ĐỂ CHẮC ĂN
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+
     ports:
-      - "8080:8080"
-    volumes:
-      - ./realms/:/opt/keycloak/data/import/
+      - "8085:8080"
+#    volumes:
+#      - ./realms/:/opt/keycloak/data/import/
     depends_on:
-      - keycloak-mysql
+      keycloak-mysql:
+        condition: service_healthy
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.0.1
@@ -141,6 +156,7 @@ services:
       - SPRING_PROFILES_ACTIVE=docker
       - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY= TRACE
       - eureka.client.serviceUrl.defaultZone=http://eureka:password@discovery-server:8761/eureka
+      - management.zipkin.tracing.endpoint=http://zipkin:9411/api/v2/spans
     depends_on:
       - zipkin
       - discovery-server

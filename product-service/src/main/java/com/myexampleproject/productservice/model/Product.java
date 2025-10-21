@@ -1,13 +1,19 @@
 package com.myexampleproject.productservice.model;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
-import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.mapping.Document;
+import jakarta.persistence.*;
+import lombok.*;
+
 
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
 //class Java này sẽ ánh xạ tới một collection trong MongoDB.
 //Dùng thay cho @Entity trong JPA.
-@Document(value = "product")
+@Entity
+@Table(name = "product")
 //Tự động tạo constructor với tất cả các field.
 @AllArgsConstructor
 //Tự động tạo constructor rỗng.
@@ -17,9 +23,17 @@ import lombok.*;
 //auto getter/setter/toString/equals/hashCode.
 @Data
 public class Product {
-	@Id	
-	private String id;
+    @Id
+    // 4. Thêm dòng này để id tự động tăng (AUTO_INCREMENT trong MySQL)
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    @Column(nullable = false)
 	private String name;
 	private String description;
+    @Column(nullable = false)
 	private BigDecimal price;
+    @CreationTimestamp
+    private LocalDateTime createdAt;
+    @UpdateTimestamp
+    private LocalDateTime updatedAt;
 }
