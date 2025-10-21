@@ -1,0 +1,22 @@
+services:
+  redis:
+    image: redis:7-alpine # Dùng image alpine cho nhẹ
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      micro_net: #chung mạng với docker-compose.yml
+
+  product-service:  #cấu hình ghi đè product
+    environment:
+      #Báo cho spring biết địa chỉ redis
+      #ghi đè giá trị localhost
+      #biến môi trường đổi kịch bản
+      - SPRING_PROFILES_ACTIVE=redis
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+    depends_on:
+      - redis
+    networks:
+      micro_net:
+

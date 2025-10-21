@@ -2,6 +2,8 @@ package com.myexampleproject.productservice.service;
 
 import java.util.List;
 
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import com.myexampleproject.productservice.dto.ProductRequest;
@@ -20,33 +22,48 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class ProductService {
 	private final ProductRepository productRepository;
-	
-	public Product createProduct(ProductRequest productRequest) {
+
+//    "Evict" là "xóa bỏ"
+//Khi bạn tạo sản phẩm mới
+// Danh sách getAllProducts cũ trong cache (products) bị sai (vì thiếu sản phẩm mới).
+//Annotation này ra lệnh: "Sau khi hàm createProduct chạy xong,
+// hãy xóa sạch (allEntries = true) mọi thứ trong ngăn products."
+// Lần gọi getAllProducts tiếp theo sẽ phải query lại DB (lấy danh sách mới) và cache lại.
+    @CacheEvict(cacheNames = "products", allEntries = true)
+	public ProductResponse createProduct(ProductRequest productRequest) {
         Product product = Product.builder()
 				.name(productRequest.getName())
 				.description(productRequest.getDescription())
 				.price(productRequest.getPrice())
 				.build();
-		return productRepository.save(product);
+        Product savedProduct = productRepository.save(product);
+		return mapToProductResponse(savedProduct);
 	}
 
+//    tạo một "ngăn kéo" cache tên là products
+    @Cacheable(cacheNames = "products")
 	public List<ProductResponse> getAllProducts() {
+        // Lần đầu chạy, code này sẽ thực thi và query DB
+        // Lần thứ 2 trở đi, nó sẽ trả về kết quả từ Redis ngay lập tức
 		List<Product> products = productRepository.findAll();
 		return products.stream().map(this::mapToProductResponse).toList();
 	}
 
+//   Dùng tham số id làm key
+    @Cacheable(cacheNames = "product", key = "#id") // <-- Cache theo ID
     public ProductResponse getProductById(Long id){
         Product product = productRepository.findById(id).orElseThrow(() -> new RuntimeException("Product not found"));
         return mapToProductResponse(product);
     }
 
+    @CacheEvict(cacheNames = {"product", "products"}, key = "#id", allEntries = true)
     public void deleteProductById(Long id){
         if(!productRepository.existsById(id)){
             throw new RuntimeException("Product not found");
         }
         productRepository.deleteById(id);
     }
-	
+
 	private ProductResponse mapToProductResponse(Product product) {
 		return ProductResponse.builder()
 				.id(product.getId())
