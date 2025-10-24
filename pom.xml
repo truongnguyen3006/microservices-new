@@ -30,6 +30,7 @@
         <maven.compiler.target>24</maven.compiler.target>
         <spring-cloud.version>2025.0.0</spring-cloud.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <image.tag>latest</image.tag>
     </properties>
 
     <dependencyManagement>
@@ -86,7 +87,7 @@
                         <image>eclipse-temurin:21-jre</image>
                     </from>
                     <to>
-                        <image>registry.hub.docker.com/truongnguyen3006/${project.artifactId}</image>
+                        <image>truongnguyen3006/${project.artifactId}:${image.tag}</image>
                     </to>
                 </configuration>
             </plugin>

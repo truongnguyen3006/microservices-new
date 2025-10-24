@@ -4,8 +4,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import com.myexampleproject.inventoryservice.event.OrderPlacedEvent;
-import com.myexampleproject.orderservice.dto.OrderLineItemsDto;
-import com.myexampleproject.orderservice.event.OrderProcessingEvent;
+import com.myexampleproject.inventoryservice.dto.OrderLineItemsDto;
+import com.myexampleproject.inventoryservice.event.OrderProcessingEvent;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
