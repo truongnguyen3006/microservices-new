@@ -26,7 +26,6 @@ services:
     image: mysql:8
     environment:
       MYSQL_ROOT_PASSWORD: truongnguyen
-# lệnh cho image mysql tự động tạo một database rỗng
       MYSQL_DATABASE: product-service
       TZ: Asia/Ho_Chi_Minh
     ports:
