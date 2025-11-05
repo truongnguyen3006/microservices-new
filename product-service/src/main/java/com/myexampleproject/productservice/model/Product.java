@@ -36,4 +36,6 @@ public class Product {
     private LocalDateTime createdAt;
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+    @Column(unique = true, nullable = false)
+    private String skuCode;
 }

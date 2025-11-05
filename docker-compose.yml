@@ -1,4 +1,13 @@
 services:
+
+  redis:
+    image: redis:7-alpine # Dùng image alpine cho nhẹ
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - micro_net
+
   ## MySQL Docker Compose Config
   mysql-order:
     container_name: mysql-order
@@ -24,7 +33,6 @@ services:
     image: mysql:8
     environment:
       MYSQL_ROOT_PASSWORD: truongnguyen
-      # lệnh cho image mysql tự động tạo một database rỗng
       MYSQL_DATABASE: product-service
     ports:
       - "3308:3306"
@@ -110,35 +118,73 @@ services:
     networks:
       - micro_net
 
-
   zookeeper:
     image: confluentinc/cp-zookeeper:7.0.1
     container_name: zookeeper
-    profiles: ["async"]
     ports:
       - "2181:2181"
     environment:
+      KAFKA_HEAP_OPTS: "-Xms1G -Xmx1G"
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'srvr' | nc -w 2 localhost 2181 | grep 'Mode:'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - micro_net
 
   broker:
     image: confluentinc/cp-kafka:7.0.1
     container_name: broker
-    profiles: ["async"]
     ports:
       - "9092:9092"
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     environment:
+      KAFKA_HEAP_OPTS: "-Xms1G -Xmx1G"
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://broker:29092
+      # THÊM: Chỉ định listener nào cho các broker khác giao tiếp
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    healthcheck:
+      # SỬA: Healthcheck nên dùng listener nội bộ (an toàn hơn)
+      test: [ "CMD-SHELL", "kafka-topics --bootstrap-server broker:29092 --list" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - micro_net
+
+  schema-registry:
+    container_name: schema-registry
+
+    # SỬA LỖI 1: Phiên bản phải khớp với zookeeper và broker
+    image: confluentinc/cp-schema-registry:7.0.1
+
+    hostname: schema-registry
+    depends_on:
+      # SỬA: Thêm điều kiện chờ broker healthy
+      broker:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      # SỬA LỖI 2: Phải dùng listener NỘI BỘ (broker:29092)
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
     networks:
       - micro_net
 
@@ -150,9 +196,6 @@ services:
       - "8761:8761"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-#      - management.zipkin.tracing.endpoint=http://zipkin:9411/api/v2/spans
-#    depends_on:
-#      - zipkin
     networks:
       - micro_net
 
@@ -166,10 +209,8 @@ services:
       - SPRING_PROFILES_ACTIVE=docker
       - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY= TRACE
       - eureka.client.serviceUrl.defaultZone=http://eureka:password@discovery-server:8761/eureka
-#      - management.zipkin.tracing.endpoint=http://zipkin:9411/api/v2/spans
       - spring.security.oauth2.resourceserver.jwt.issuer-uri=http://keycloak:8085/realms/spring-boot-microservices-realm
     depends_on:
-#      - zipkin
       - discovery-server
       - keycloak
     networks:
@@ -184,17 +225,19 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql-product:3306/product-service
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: truongnguyen
-      SPRING_JPA_DATABASE-PLATFORM: org.hibernate.dialect.MySQL8Dialect
+      SPRING_JPA_DATABASE-PLATFORM: org.hibernate.dialect.MySQL8Dialect # Lưu ý: Thường là spring.jpa.database-platform
       SPRING_PROFILES_ACTIVE: docker
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:password@discovery-server:8761/eureka
-#      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
-
+      SPRING_DATA_REDIS_HOST: redis     # <-- Sửa thụt lề ở đây
+      SPRING_DATA_REDIS_PORT: 6379
     depends_on:
       mysql-product:
-        condition: service_healthy # <-- Sửa ở đây
+        condition: service_healthy
       discovery-server:
         condition: service_started
       api-gateway:
+        condition: service_started
+      redis:
         condition: service_started
     networks:
       - micro_net
@@ -203,14 +246,11 @@ services:
   notification-service:
     container_name: notification-service
     image: truongnguyen3006/notification-service:latest
-    profiles: ["async"]
     environment:
-      SPRING_PROFILES_ACTIVE: docker
+#      SPRING_PROFILES_ACTIVE: docker
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:password@discovery-server:8761/eureka
-#      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
-      spring.kafka.bootstrap-servers: broker:29092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: broker:29092
     depends_on:
-      - zipkin
       - broker
       - discovery-server
       - api-gateway
@@ -218,10 +258,9 @@ services:
       - micro_net
 
   ## Order-Service Docker Compose Config
-  order-service-async:
+  order-service:
     container_name: order-service
-    image: truongnguyen3006/order-service:3.0-event
-    profiles: ["async"]
+    image: truongnguyen3006/order-service:latest
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql-order:3306/order-service
       SPRING_DATASOURCE_USERNAME: root
@@ -229,14 +268,12 @@ services:
       SPRING_JPA_DATABASE-PLATFORM: org.hibernate.dialect.MySQL8Dialect
       SPRING_PROFILES_ACTIVE: docker
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:password@discovery-server:8761/eureka
-      spring.kafka.bootstrap-servers: broker:29092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: broker:29092
     depends_on:
       mysql-order:
         condition: service_healthy # <-- Sửa ở đây
       broker:
-        condition: service_started
-      zipkin:
-        condition: service_started
+        condition: service_healthy
       discovery-server:
         condition: service_started
       api-gateway:
@@ -244,25 +281,26 @@ services:
     networks:
       - micro_net
   ## Inventory-Service Docker Compose Config
-  inventory-service-async:
+
+  inventory-service:
     container_name: inventory-service
-    image: truongnguyen3006/inventory-service:3.0-event
-    profiles: ["async"]
+    image: truongnguyen3006/inventory-service:latest
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql-inventory:3306/inventory-service
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: truongnguyen
       SPRING_JPA_DATABASE-PLATFORM: org.hibernate.dialect.MySQL8Dialect
-      SPRING_PROFILES_ACTIVE: docker
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka:password@discovery-server:8761/eureka
-      spring.kafka.bootstrap-servers: broker:29092
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: broker:29092
     depends_on:
       mysql-inventory:
-        condition: service_healthy # <-- Sửa ở đây
+        condition: service_healthy
       discovery-server:
         condition: service_started
       api-gateway:
         condition: service_started
+      broker:
+        condition: service_healthy
     networks:
       - micro_net
 

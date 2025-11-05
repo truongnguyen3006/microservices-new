@@ -2,8 +2,10 @@ package com.myexampleproject.productservice.service;
 
 import java.util.List;
 
+import com.myexampleproject.productservice.event.ProductCreatedEvent;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 import com.myexampleproject.productservice.dto.ProductRequest;
@@ -22,7 +24,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class ProductService {
 	private final ProductRepository productRepository;
-
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 //    "Evict" là "xóa bỏ"
 //Khi bạn tạo sản phẩm mới
 // Danh sách getAllProducts cũ trong cache (products) bị sai (vì thiếu sản phẩm mới).
@@ -35,8 +37,23 @@ public class ProductService {
 				.name(productRequest.getName())
 				.description(productRequest.getDescription())
 				.price(productRequest.getPrice())
+                .skuCode(productRequest.getSkuCode())
 				.build();
         Product savedProduct = productRepository.save(product);
+        log.info("Product {} saved locally.", savedProduct.getId());
+        // 2. --- LOGIC MỚI: BẮN SỰ KIỆN KAFKA ---
+        // Tạo sự kiện chỉ chứa thông tin inventory cần
+        ProductCreatedEvent event = ProductCreatedEvent.builder()
+                .skuCode(savedProduct.getSkuCode())
+                .initialQuantity(productRequest.getInitialQuantity())
+                .build();
+
+        // Gửi sự kiện tới topic "product-created-topic"
+        kafkaTemplate.send("product-created-topic", event.getSkuCode(), event);
+
+        log.info("ProductCreatedEvent sent for skuCode: {}", event.getSkuCode());
+
+        // 3. Trả về Response
 		return mapToProductResponse(savedProduct);
 	}
 
@@ -70,6 +87,7 @@ public class ProductService {
 				.name(product.getName())
 				.description(product.getDescription())
 				.price(product.getPrice())
+                .skuCode(product.getSkuCode())
 				.build();
 	}
 }
