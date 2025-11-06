@@ -2,6 +2,7 @@ package com.myexampleproject.orderservice.service;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myexampleproject.orderservice.event.*;
@@ -9,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,36 +32,52 @@ public class OrderService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ObjectMapper objectMapper;
 
-    // Hàm này bây giờ CỰC NHANH - chỉ làm 1 việc là gửi Kafka.
     public void placeOrder(OrderRequest orderRequest) {
-
-        // 1. Vẫn tạo OrderNumber
         String orderNumber = UUID.randomUUID().toString();
+        log.info("Order {} received. Sending processing events ASYNC...", orderNumber);
 
-        log.info("Order {} received. Sending processing events...", orderNumber);
-
-        // 2. Gửi TẤT CẢ sự kiện xử lý (trừ kho)
+        // 1. Gửi TẤT CẢ sự kiện xử lý (trừ kho)
         for (OrderLineItemsDto item : orderRequest.getOrderLineItemsDtoList()) {
             OrderProcessingEvent itemEvent = new OrderProcessingEvent(
                     orderNumber,
-                    List.of(item) // Chỉ chứa 1 món hàng
+                    List.of(item)
             );
-            kafkaTemplate.send("order-processing-topic", item.getSkuCode(), itemEvent);
+
+            // === SỬA ĐỔI QUAN TRỌNG ===
+            // Gửi và KHÔNG CHỜ (fire and forget)
+            CompletableFuture<SendResult<String, Object>> future =
+                    kafkaTemplate.send("order-processing-topic", item.getSkuCode(), itemEvent);
+
+            // Thêm xử lý lỗi (rất quan trọng)
+            future.whenComplete((result, ex) -> {
+                if (ex != null) {
+                    log.error("Lỗi khi gửi (bất đồng bộ) item {} cho order {}: {}",
+                            item.getSkuCode(), orderNumber, ex.getMessage());
+                }
+            });
         }
 
-        // 3. THÊM MỚI: Gửi sự kiện "OrderPlaced"
-        // Sự kiện này dùng để BÊN TRONG service này tự bắt lấy và LƯU vào CSDL
+        // 2. Gửi sự kiện "OrderPlaced"
         OrderPlacedEvent placedEvent = new OrderPlacedEvent(
                 orderNumber,
-                orderRequest.getOrderLineItemsDtoList() // Gửi toàn bộ DTO
+                orderRequest.getOrderLineItemsDtoList()
         );
-        kafkaTemplate.send("order-placed-topic", orderNumber, placedEvent);
 
-        // 4. BỎ: Không save CSDL ở đây nữa
-        // orderRepository.save(order);
+        // === SỬA ĐỔI QUAN TRỌNG ===
+        CompletableFuture<SendResult<String, Object>> placedFuture =
+                kafkaTemplate.send("order-placed-topic", orderNumber, placedEvent);
 
-        log.info("All events for Order {} sent.", orderNumber);
-        // Hàm này kết thúc và trả về 200 OK cho người dùng NGAY LẬP TỨC
+        placedFuture.whenComplete((result, ex) -> {
+            if (ex != null) {
+                log.error("Lỗi khi gửi (bất đồng bộ) placed-event cho order {}: {}",
+                        orderNumber, ex.getMessage());
+            }
+        });
+
+        log.info("All events for Order {} queued. Returning 200 OK.", orderNumber);
+
+        // Hàm này KẾT THÚC NGAY LẬP TỨC
+        // HTTP 200 OK được trả về trong khi Kafka producer tự xử lý trong nền.
     }
 
     @KafkaListener(

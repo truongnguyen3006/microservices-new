@@ -28,6 +28,7 @@ import org.apache.kafka.streams.state.Stores;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.DependsOn;
 import org.springframework.kafka.annotation.EnableKafkaStreams;
 
 import java.util.Collections;
@@ -52,6 +53,7 @@ public class InventoryService {
     }
 
     @Bean
+    @DependsOn("kafkaAdmin")
     public KStream<String, OrderValidatedEvent> inventoryTopology(StreamsBuilder builder) {
 
         Serde<ProductCreatedEvent> productCreatedSerde =
