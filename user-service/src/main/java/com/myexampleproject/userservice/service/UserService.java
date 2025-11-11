@@ -1,25 +1,91 @@
 package com.myexampleproject.userservice.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.myexampleproject.userservice.dto.AdminUpdateUserRequest;
 import com.myexampleproject.userservice.dto.UserRequest;
 import com.myexampleproject.userservice.dto.UserResponse;
 import com.myexampleproject.userservice.model.User;
 import com.myexampleproject.userservice.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RequiredArgsConstructor
 @Service // Đánh dấu đây là một Bean Service
 public class UserService {
     private final UserRepository userRepository;
+    private final KeycloakService keycloakService;
 
-    // Keycloak Admin API
-    private final WebClient keycloakClient = WebClient.builder()
-            .baseUrl("http://keycloak:8085/admin/realms/spring-boot-microservices-realm")
-            .defaultHeader("Authorization", "Bearer <admin-access-token>") // bạn có thể inject qua config
-            .build();
+    // Tạo user trong  DB
+    public UserResponse createUser(UserRequest userRequest){
+        // 1️⃣ Gọi API Keycloak để tạo user
+        String keycloakId = keycloakService.createUserInKeycloak(userRequest);
+
+        // 2️⃣ Gán role mặc định ("user") cho user vừa tạo
+        keycloakService.assignRealmRoleToUser(keycloakId, "user");
+
+        // 2️⃣ Lưu user profile vào DB
+        User user = User.builder()
+                .keycloakId(keycloakId)
+                .fullName(userRequest.getFullName())
+                .email(userRequest.getEmail())
+                .phoneNumber(userRequest.getPhoneNumber())
+                .address(userRequest.getAddress())
+                .status(true)
+                .build();
+        userRepository.save(user);
+        return mapToUserResponse(user);
+    }
+
+    //    Người dùng tự cập nhật
+    public UserResponse updateSelfUser(String keycloakId, UserRequest request) {
+        User user = userRepository.findByKeycloakId(keycloakId)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy user"));
+
+        // Cập nhật thông tin trong DB
+        if (request.getFullName() != null) user.setFullName(request.getFullName());
+        if (request.getEmail() != null) user.setEmail(request.getEmail());
+        if (request.getPhoneNumber() != null) user.setPhoneNumber(request.getPhoneNumber());
+        if (request.getAddress() != null) user.setAddress(request.getAddress());
+        userRepository.save(user);
+
+        // Đồng bộ lên Keycloak
+        Map<String, Object> body = new HashMap<>();
+        if (request.getEmail() != null) body.put("email", request.getEmail());
+        if (request.getFullName() != null) body.put("firstName", request.getFullName());
+        if (request.getPhoneNumber() != null) body.put("attributes", Map.of("phoneNumber", request.getPhoneNumber()));
+        if (request.getAddress() != null) body.put("attributes", Map.of("address", request.getAddress()));
+
+
+        keycloakService.updateUserInKeycloak(user.getKeycloakId(), body);
+
+        // Nếu người dùng đổi mật khẩu
+        if (request.getPassword() != null && !request.getPassword().isBlank()) {
+            keycloakService.updatePasswordInKeycloak(user.getKeycloakId(), request.getPassword());
+        }
+
+        return mapToUserResponse(user);
+    }
+
+    // Admin cập nhật người dùng
+    public UserResponse updateUserByAdmin(Long id,  boolean enabled) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy user"));
+
+        keycloakService.updateUserInKeycloak(user.getKeycloakId(), Map.of("enabled", enabled));
+        user.setStatus(enabled); // 🟢 Cập nhật field mới
+        userRepository.save(user); // 🟢 Lưu vào DB
+        return mapToUserResponse(user);
+    }
+
 
     public List<UserResponse> getAllUsers(){
         List<User> users = userRepository.findAll();
@@ -31,39 +97,11 @@ public class UserService {
         return mapToUserResponse(user);
     }
 
-    // Tạo user trong Keycloak + DB app
-    public UserResponse createUser(UserRequest userRequest){
-        // 1️⃣ Gọi API Keycloak để tạo user
-        String keycloakId = createUserInKeycloak(userRequest);
-
-        // 2️⃣ Lưu user profile vào DB
-        User user = User.builder()
-                .keycloakId(keycloakId)
-                .fullName(userRequest.getFullName())
-                .email(userRequest.getEmail())
-                .phoneNumber(userRequest.getPhoneNumber())
-                .address(userRequest.getAddress())
-                .build();
-
-        userRepository.save(user);
-        return mapToUserResponse(user);
-    }
-
-    private String createUserInKeycloak(UserRequest req) {
-        // Gửi request tạo user tới Keycloak Admin REST API
-        // (Giả lập logic, bạn có thể dùng WebClient hoặc Keycloak Admin Client SDK)
-        // POST /admin/realms/{realm}/users
-        // Sau khi tạo user, Keycloak trả về Location header chứa ID user
-
-        // Tạm thời giả lập trả về ID ngẫu nhiên
-        return java.util.UUID.randomUUID().toString();
-    }
-
     public void deleteUserById(Long id){
-        // Thêm logic kiểm tra nếu cần
-        if(!userRepository.existsById(id)){
-            throw new RuntimeException("User not found");
-        }
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        // 1️⃣ Xóa trên Keycloak
+        keycloakService.deleteUser(user.getKeycloakId());
         userRepository.deleteById(id);
     }
 
@@ -75,6 +113,7 @@ public class UserService {
                 .email(user.getEmail())
                 .phoneNumber(user.getPhoneNumber())
                 .address(user.getAddress())
+                .status(user.isStatus())
                 .build();
     }
 

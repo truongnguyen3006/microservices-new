@@ -32,7 +32,7 @@ public class User {
     private String phoneNumber;
     private String address;
 //    private int points = 0;
-
+    private boolean status;
     @CreationTimestamp
     private LocalDateTime createdDate;
 

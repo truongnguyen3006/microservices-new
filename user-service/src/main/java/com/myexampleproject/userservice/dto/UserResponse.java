@@ -16,5 +16,5 @@ public class UserResponse {
     private String email;
     private String phoneNumber;
     private String address;
-    private int points;
+    private boolean status;
 }
