@@ -157,13 +157,7 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-    command:
-      - bash
-      - -c
-      - |
-        echo "auto.create.topics.enable=true" >> /etc/kafka/kafka.properties
-        /etc/confluent/docker/run
-
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
     healthcheck:
       # SỬA: Healthcheck nên dùng listener nội bộ (an toàn hơn)
       test: [ "CMD-SHELL", "kafka-topics --bootstrap-server broker:29092 --list" ]
