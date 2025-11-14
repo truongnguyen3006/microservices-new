@@ -1,7 +1,6 @@
 package com.myexampleproject.orderservice.config;
 
-import com.myexampleproject.orderservice.event.OrderStatusEvent;
-import com.myexampleproject.orderservice.event.PaymentProcessedEvent;
+import com.myexampleproject.common.event.*;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.serialization.Serde;
 import org.apache.kafka.common.serialization.Serdes;
@@ -13,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafkaStreams;
 import io.confluent.kafka.streams.serdes.json.KafkaJsonSchemaSerde;
 import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig;
-import java.time.Duration;
+
 import java.util.Map;
 
 @Configuration

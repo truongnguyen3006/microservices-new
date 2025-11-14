@@ -1,158 +1,99 @@
 package com.myexampleproject.inventoryservice.controller;
 
-import com.myexampleproject.inventoryservice.event.InventoryAdjustmentEvent;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myexampleproject.common.event.InventoryAdjustmentEvent;
 import com.myexampleproject.inventoryservice.service.InventoryService;
-import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.common.serialization.Serdes;
-import org.apache.kafka.streams.KafkaStreams;
-import org.apache.kafka.streams.KeyQueryMetadata;
-import org.apache.kafka.streams.StoreQueryParameters;
-import org.apache.kafka.streams.errors.InvalidStateStoreException;
-import org.apache.kafka.streams.state.HostInfo;
-import org.apache.kafka.streams.state.QueryableStoreTypes;
-import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
-import org.springframework.kafka.config.StreamsBuilderFactoryBean;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
 
-import java.net.URI;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/inventory")
-@Slf4j
+@RequiredArgsConstructor
 public class InventoryController {
 
-    private final StreamsBuilderFactoryBean factoryBean;
-    private final RestTemplate restTemplate = new RestTemplate();
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final InventoryService inventoryService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @Value("${spring.kafka.streams.properties.application.server.id}")
-    private String applicationServerConfig;
-    private HostInfo thisHostInfo;
-
-    @Autowired
-    public InventoryController(StreamsBuilderFactoryBean factoryBean, KafkaTemplate<String, Object> kafkaTemplate) {
-        this.factoryBean = factoryBean;
-        // === THÊM DÒNG NÀY ===
-        this.kafkaTemplate = kafkaTemplate;
-    }
-
+    // ============================
+    // ADJUST INVENTORY
+    // ============================
     @PostMapping("/adjust")
-    public ResponseEntity<?> adjustInventory(@RequestBody InventoryAdjustmentEvent adjustmentEvent) {
-        if (adjustmentEvent.getSkuCode() == null || adjustmentEvent.getAdjustmentQuantity() == 0) {
-            return ResponseEntity.badRequest().body(Map.of("error", "skuCode and adjustmentQuantity must be provided"));
-        }
+    public ResponseEntity<?> adjustInventory(@RequestBody String rawBody) {
+        log.info("RAW REQUEST BODY: {}", rawBody);
 
-        log.info("ADMIN ACTION: Adjusting inventory for {} by {}. Reason: {}",
-                adjustmentEvent.getSkuCode(),
-                adjustmentEvent.getAdjustmentQuantity(),
-                adjustmentEvent.getReason());
+        InventoryAdjustmentEvent event;
+        int delta;
 
-        // Gửi "lệnh" này vào Kafka
-        kafkaTemplate.send("inventory-adjustment-topic",
-                adjustmentEvent.getSkuCode(),
-                adjustmentEvent);
-
-        return ResponseEntity.accepted().body(Map.of("status", "Adjustment request received and is being processed."));
-    }
-
-    private HostInfo getThisHostInfo() {
-        if (thisHostInfo == null) {
-            try {
-                String host = applicationServerConfig.split(":")[0];
-                int port = Integer.parseInt(applicationServerConfig.split(":")[1]);
-                this.thisHostInfo = new HostInfo(host, port);
-            } catch (Exception e) {
-                log.error("Lỗi phân tích 'application.server.id': [{}]. Cần có dạng 'host:port'", applicationServerConfig);
-                throw new RuntimeException("Cấu hình 'application.server.id' không hợp lệ", e);
-            }
-        }
-        return thisHostInfo;
-    }
-
-    @GetMapping("/{skuCode}")
-    public ResponseEntity<?> getInventory(@PathVariable String skuCode) {
-
-        KafkaStreams streams = factoryBean.getKafkaStreams();
-        if (streams == null || streams.state() != KafkaStreams.State.RUNNING) {
-            return ResponseEntity.status(503).body(Map.of("error", "Kafka Streams chưa sẵn sàng (State: " + (streams == null ? "NULL" : streams.state()) + ")"));
-        }
-
-        // ========================================================
-        // === SỬA LẠI LOGIC: HÃY THỬ TRUY VẤN CỤC BỘ TRƯỚC ===
-        // ========================================================
-
-        ReadOnlyKeyValueStore<String, Integer> store;
+        // ---------- VALIDATE JSON ----------
         try {
-            // 1. Lấy State Store CỤC BỘ
-            store = streams.store(
-                    StoreQueryParameters.fromNameAndType(
-                            InventoryService.INVENTORY_STORE_NAME,
-                            QueryableStoreTypes.keyValueStore()
-                    )
-            );
-        } catch (InvalidStateStoreException e) {
-            // Store chưa sẵn sàng, đây có thể là lỗi 503
-            log.warn("InvalidStateStore (chưa sẵn sàng) khi truy vấn {}: {}", skuCode, e.getMessage());
-            return ResponseEntity.status(503).body(Map.of("error", "State Store chưa sẵn sàng, hãy thử lại sau giây lát."));
+            JsonNode json = objectMapper.readTree(rawBody);
+
+            if (!json.has("skuCode"))
+                return ResponseEntity.badRequest().body(Map.of("error", "skuCode required"));
+
+            if (!json.has("adjustmentQuantity"))
+                return ResponseEntity.badRequest().body(Map.of("error", "adjustmentQuantity required"));
+
+            String sku = json.get("skuCode").asText();
+            delta = Integer.parseInt(json.get("adjustmentQuantity").asText());
+            String reason = json.has("reason") ? json.get("reason").asText() : null;
+
+            event = new InventoryAdjustmentEvent(sku, delta, reason);
+
+        } catch (Exception e) {
+            log.error("JSON parse error", e);
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid JSON"));
         }
 
-        // 2. Thử LẤY key
-        Integer quantity = store.get(skuCode);
+        if (delta == 0)
+            return ResponseEntity.badRequest().body(Map.of("error", "Adjustment cannot be zero"));
 
-        if (quantity != null) {
-            // === TRƯỜNG HỢP 1: TÌM THẤY! KEY NẰM TRÊN INSTANCE NÀY ===
-            log.info("Query local store: TÌM THẤY key {} tại {}", skuCode, getThisHostInfo());
-            return ResponseEntity.ok(Map.of("skuCode", skuCode, "quantity", quantity));
-        }
+        // ---------- READ CURRENT STOCK ----------
+        Integer current = inventoryService.getQuantity(event.getSkuCode());
+        if (current == null)
+            return ResponseEntity.status(503).body(Map.of("error", "State store not ready"));
 
-        // === TRƯỜNG HỢP 2: KHÔNG TÌM THẤY CỤC BỘ. HÃY KIỂM TRA METADATA ===
-        // Key này có thể thuộc về một instance khác.
-        log.warn("Query local store: KHÔNG tìm thấy {}. Tìm kiếm metadata...", skuCode);
+        // ---------- PREVENT NEGATIVE STOCK ----------
+        if (current + delta < 0)
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Inventory cannot be negative",
+                    "current", current,
+                    "attempted", delta
+            ));
 
-        KeyQueryMetadata metadata = streams.queryMetadataForKey(
-                InventoryService.INVENTORY_STORE_NAME,
-                skuCode,
-                Serdes.String().serializer()
-        );
+        // ---------- PRODUCE EVENT ----------
+        kafkaTemplate.send("inventory-adjustment-topic", event.getSkuCode(), event);
 
-        if (metadata == null || metadata.activeHost() == null || metadata.activeHost().port() == -1) {
-            // Lỗi "Không tìm thấy metadata" của bạn nằm ở đây.
-            log.warn("Không tìm thấy metadata cho key {}", skuCode);
-            return ResponseEntity.status(404)
-                    .body(Map.of("error", "Không tìm thấy thông tin cho SKU: " + skuCode));
-        }
+        // ---------- WAIT FOR ASYNC UPDATE ----------
+        Integer updated = inventoryService.waitForUpdatedQuantity(event.getSkuCode());
+        if (updated == null)
+            return ResponseEntity.accepted().body(Map.of("status", "queued"));
 
-        HostInfo activeHost = metadata.activeHost();
-        HostInfo thisInstance = getThisHostInfo();
+        // ---------- RETURN RESULT ----------
+        return ResponseEntity.ok(Map.of(
+                "skuCode", event.getSkuCode(),
+                "newQuantity", updated
+        ));
+    }
 
-        if (activeHost.equals(thisInstance)) {
-            // Lỗi logic: Metadata nói key ở đây, nhưng local store không thấy?
-            // (Có thể là do độ trễ rất nhỏ)
-            log.error("Lỗi logic: Metadata nói key {} ở đây, nhưng local store không tìm thấy.", skuCode);
-            return ResponseEntity.status(404)
-                    .body(Map.of("error", "Không tìm thấy (Lỗi logic Metadata): " + skuCode));
-        } else {
+    // ============================
+    // GET INVENTORY
+    // ============================
+    @GetMapping("/{sku}")
+    public ResponseEntity<?> getInventory(@PathVariable String sku) {
+        Integer qty = inventoryService.getQuantity(sku);
 
-            // === TRƯỜNG HỢP 3: KEY NẰM Ở INSTANCE KHÁC -> CHUYỂN TIẾP (PROXY) ===
-            log.info("Key {} nằm ở {}. Chuyển tiếp request từ {}...",
-                    skuCode, activeHost, thisInstance);
+        if (qty == null)
+            return ResponseEntity.status(503).body(Map.of("error", "State store not ready"));
 
-            URI redirectUri = UriComponentsBuilder.fromUriString(
-                    String.format("http://%s:%d/api/inventory/%s",
-                            activeHost.host(),
-                            activeHost.port(),
-                            skuCode)
-            ).build().toUri();
-
-            return restTemplate.getForEntity(redirectUri, String.class);
-        }
+        return ResponseEntity.ok(Map.of("skuCode", sku, "quantity", qty));
     }
 }

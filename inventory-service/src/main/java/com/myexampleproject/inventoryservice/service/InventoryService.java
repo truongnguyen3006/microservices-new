@@ -1,242 +1,130 @@
 package com.myexampleproject.inventoryservice.service;
 
-import com.myexampleproject.inventoryservice.event.*;
-import com.myexampleproject.inventoryservice.dto.OrderLineItemsDto;
+import com.myexampleproject.inventoryservice.config.InventoryTopology;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig;
-import io.confluent.kafka.streams.serdes.json.KafkaJsonSchemaSerde;
-import org.apache.kafka.common.serialization.Serde;
-import org.apache.kafka.common.serialization.Serdes;
-import org.apache.kafka.streams.StreamsBuilder;
-import org.apache.kafka.streams.kstream.*;
+import org.apache.kafka.streams.KafkaStreams;
+import org.apache.kafka.streams.StoreQueryParameters;
+import org.apache.kafka.streams.state.QueryableStoreTypes;
+import org.apache.kafka.streams.state.ReadOnlyKeyValueStore;
+import org.springframework.kafka.config.StreamsBuilderFactoryBean; // Import này là đúng
+import org.springframework.stereotype.Service;
 
-// ========================================================================
-// === IMPORT CHÍNH XÁC (SỬ DỤNG 100% API MỚI) ===
-// ========================================================================
-import org.apache.kafka.streams.processor.api.Processor;
-import org.apache.kafka.streams.processor.api.ProcessorContext;
-import org.apache.kafka.streams.processor.api.Record;
-// === BỎ CÁC IMPORT CŨ (nếu còn): ===
-// BỎ: import org.apache.kafka.streams.processor.Processor;
-// BỎ: import org.apache.kafka.streams.processor.ProcessorContext;
-// BỎ: import org.apache.kafka.streams.processor.ProcessorSupplier;
-// ========================================================================
-
-import org.apache.kafka.streams.state.KeyValueStore;
-import org.apache.kafka.streams.state.StoreBuilder;
-import org.apache.kafka.streams.state.Stores;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.DependsOn;
-import org.springframework.kafka.annotation.EnableKafkaStreams;
-
-import java.util.Collections;
-import java.util.Map;
-
-@Configuration
 @Slf4j
-@EnableKafkaStreams
+@Service
+@RequiredArgsConstructor
 public class InventoryService {
 
-    public static final String INVENTORY_STORE_NAME = "inventory-store";
+    /*
+     * Inject StreamsBuilderFactoryBean là đúng.
+     */
+    private final StreamsBuilderFactoryBean streamsBuilderFactory;
 
-    @Value("${spring.kafka.properties.schema.registry.url}")
-    private String schemaRegistryUrl;
+    /*
+     * XÓA BỎ PHƯƠNG THỨC getKafkaStreams() GÂY LỖI
+     */
+    // private KafkaStreams getKafkaStreams() { ... }
 
-    private <T> Serde<T> createJsonSchemaSerde(Class<T> dtoClass) {
-        final Serde<T> serde = new KafkaJsonSchemaSerde<>(dtoClass);
-        Map<String, String> config =
-                Map.of(AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistryUrl);
-        serde.configure(config, false);
-        return serde;
+
+    /**
+     * Lấy tồn kho hiện tại theo SKU
+     */
+    public Integer getQuantity(String sku) {
+        ReadOnlyKeyValueStore<String, Integer> store = waitUntilStoreIsReady();
+        Integer qty = store.get(sku);
+        return qty != null ? qty : 0;
     }
 
-    @Bean
-    @DependsOn("kafkaAdmin")
-    public KStream<String, OrderValidatedEvent> inventoryTopology(StreamsBuilder builder) {
+    /**
+     * Chờ state store mở xong trước khi truy vấn.
+     * (Phương thức này đã đúng logic từ trước)
+     */
+    private ReadOnlyKeyValueStore<String, Integer> waitUntilStoreIsReady() {
 
-        Serde<ProductCreatedEvent> productCreatedSerde =
-                createJsonSchemaSerde(ProductCreatedEvent.class);
-        Serde<OrderProcessingEvent> orderProcessingSerde =
-                createJsonSchemaSerde(OrderProcessingEvent.class);
-        Serde<OrderValidatedEvent> orderValidatedSerde =
-                createJsonSchemaSerde(OrderValidatedEvent.class);
-        Serde<OrderFailedEvent> orderFailedSerde =
-                createJsonSchemaSerde(OrderFailedEvent.class);
-        Serde<InventoryAdjustmentEvent> adjustmentSerde =
-                createJsonSchemaSerde(InventoryAdjustmentEvent.class);
+        for (int attempt = 1; attempt <= 30; attempt++) {
 
-        // --- BƯỚC 1: ĐỊNH NGHĨA STATE STORE ---
-        StoreBuilder<KeyValueStore<String, Integer>> inventoryStoreBuilder =
-                Stores.keyValueStoreBuilder(
-                        Stores.persistentKeyValueStore(INVENTORY_STORE_NAME),
-                        Serdes.String(),
-                        Serdes.Integer()
-                );
-        builder.addStateStore(inventoryStoreBuilder);
+            // 1. Lấy KafkaStreams từ factory
+            KafkaStreams streams = streamsBuilderFactory.getKafkaStreams();
 
+            // 2. Nếu streams chưa khởi tạo xong (null), lặp lại
+            if (streams == null) {
+                log.warn("State store chưa ready (KafkaStreams is null)... thử lần {}", attempt);
+                sleep(300);
+                continue; // Bỏ qua phần còn lại của vòng lặp
+            }
 
-        // --- BƯỚC 2: XỬ LÝ "product-created-topic" (Dùng API Mới) ---
-        KStream<String, ProductCreatedEvent> productCreationStream = builder.stream(
-                "product-created-topic",
-                Consumed.with(Serdes.String(), productCreatedSerde)
-        );
+            // 3. Nếu streams đã có, lấy state của nó
+            KafkaStreams.State s = streams.state();
 
-        productCreationStream.process(
-                () -> new Processor<String, ProductCreatedEvent, Void, Void>() {
+            // 4. Nếu đang RUNNING hoặc REBALANCING, thử truy vấn
+            if (s == KafkaStreams.State.RUNNING || s == KafkaStreams.State.REBALANCING) {
+                try {
+                    return streams.store(
+                            StoreQueryParameters.fromNameAndType(
+                                    InventoryTopology.INVENTORY_STORE,
+                                    QueryableStoreTypes.keyValueStore()
+                            )
+                    );
+                } catch (Exception e) {
+                    // Store có thể chưa sẵn sàng, lặp lại
+                    log.warn("Store query failed, retrying... ({})", e.getMessage());
+                }
+            }
 
-                    private KeyValueStore<String, Integer> store;
-                    private ProcessorContext<Void, Void> context;
+            // 5. Nếu state chưa đúng, log và lặp lại
+            log.warn("State store chưa ready (state={})... thử lần {}", s, attempt);
+            sleep(300);
+        }
 
-                    @Override
-                    public void init(ProcessorContext<Void, Void> context) {
-                        this.context = context;
-                        this.store = context.getStateStore(INVENTORY_STORE_NAME);
-                    }
+        throw new IllegalStateException("StateStore chưa ready sau 30 lần retry!");
+    }
 
-                    @Override
-                    public void process(Record<String, ProductCreatedEvent> record) {
-                        String skuCode = record.key();
-                        if (skuCode == null) return;
+    /**
+     * Sau adjust inventory, chờ state được update rồi trả về kết quả.
+     * SỬA LẠI LOGIC CHO ĐÚNG:
+     */
+    public Integer waitForUpdatedQuantity(String sku) {
 
-                        int initialQuantity = record.value().getInitialQuantity();
+        for (int attempt = 1; attempt <= 20; attempt++) {
 
-                        if (this.store.get(skuCode) == null) {
-                            this.store.put(skuCode, initialQuantity);
-                            log.info("[Streams] Initialized stock for {}: {}", skuCode, initialQuantity);
-                        } else {
-                            log.warn("[Streams] SKU {} already exists. Ignoring.", skuCode);
-                        }
-                    }
-                    @Override
-                    public void close() {}
-                },
-                INVENTORY_STORE_NAME
-        );
+            try {
+                // 1. Lấy KafkaStreams từ factory
+                KafkaStreams streams = streamsBuilderFactory.getKafkaStreams();
 
-        // === LOGIC MỚI: XỬ LÝ TOPIC ĐIỀU CHỈNH (ADJUSTMENT) ===
-        // ==========================================================
-        KStream<String, InventoryAdjustmentEvent> adjustmentStream = builder.stream(
-                "inventory-adjustment-topic",
-                Consumed.with(Serdes.String(), adjustmentSerde)
-        );
+                // 2. Nếu streams null HOẶC state chưa ready, ném lỗi để sleep/retry
+                if (streams == null || !streams.state().isRunningOrRebalancing()) {
+                    throw new IllegalStateException("Streams chưa ready hoặc đang rebalance");
+                }
 
-        adjustmentStream.process(
-                () -> new Processor<String, InventoryAdjustmentEvent, Void, Void>() {
-                    private KeyValueStore<String, Integer> store;
-                    private ProcessorContext<Void, Void> context;
+                // 3. Truy vấn store
+                ReadOnlyKeyValueStore<String, Integer> store =
+                        streams.store(
+                                StoreQueryParameters.fromNameAndType(
+                                        InventoryTopology.INVENTORY_STORE,
+                                        QueryableStoreTypes.keyValueStore()
+                                )
+                        );
 
-                    @Override
-                    public void init(ProcessorContext<Void, Void> context) {
-                        this.context = context;
-                        this.store = context.getStateStore(INVENTORY_STORE_NAME);
-                    }
+                Integer qty = store.get(sku);
+                if (qty != null) {
+                    return qty; // Tìm thấy, trả về ngay
+                }
 
-                    @Override
-                    public void process(Record<String, InventoryAdjustmentEvent> record) {
-                        String skuCode = record.key();
-                        InventoryAdjustmentEvent event = record.value();
-                        if (skuCode == null) return;
+            } catch (Exception ignored) {
+                // Bị exception (ví dụ: IllegalStateException ở trên, hoặc store not ready)
+                // -> Bỏ qua, sleep và lặp lại
+            }
 
-                        // Lấy số lượng hiện tại
-                        Integer currentStock = store.get(skuCode);
-                        if (currentStock == null) {
-                            currentStock = 0; // Nếu chưa có, coi như là 0
-                        }
+            sleep(200);
+        }
 
-                        // Tính số lượng mới
-                        int newStock = currentStock + event.getAdjustmentQuantity();
+        return null; // không có update sau 20 lần thử
+    }
 
-                        // Cập nhật lại kho
-                        store.put(skuCode, newStock);
-
-                        log.info("[Streams][ADMIN] Adjusted stock for {}. Reason: {}. Old: {}, New: {}",
-                                skuCode, event.getReason(), currentStock, newStock);
-                    }
-
-                    @Override
-                    public void close() {}
-                },
-                INVENTORY_STORE_NAME // Vẫn dùng chung 1 State Store
-        );
-
-        // --- BƯỚC 3: XỬ LÝ "order-processing-topic" (Dùng API Mới) ---
-        KStream<String, OrderProcessingEvent> orderProcessingStream = builder.stream(
-                "order-processing-topic",
-                Consumed.with(Serdes.String(), orderProcessingSerde)
-        );
-
-        KStream<String, Object> validationResultStream = orderProcessingStream.process(
-                () -> new Processor<String, OrderProcessingEvent, String, Object>() {
-
-                    private KeyValueStore<String, Integer> store;
-                    private ProcessorContext<String, Object> context;
-
-                    @Override
-                    public void init(ProcessorContext<String, Object> context) {
-                        this.context = context;
-                        this.store = context.getStateStore(INVENTORY_STORE_NAME);
-                    }
-
-                    @Override
-                    public void process(Record<String, OrderProcessingEvent> record) {
-                        String skuCode = record.key();
-                        OrderProcessingEvent orderEvent = record.value();
-
-                        if (orderEvent == null || orderEvent.getOrderLineItemsDtoList() == null || orderEvent.getOrderLineItemsDtoList().isEmpty()) {
-                            log.warn("[Streams] Received empty order event for SKU {}. Skipping.", skuCode);
-                            return;
-                        }
-
-                        OrderLineItemsDto item = orderEvent.getOrderLineItemsDtoList().get(0);
-                        int requestedQuantity = item.getQuantity();
-                        String orderNumber = orderEvent.getOrderNumber();
-                        Integer currentStock = store.get(skuCode);
-
-                        Object resultEvent;
-
-                        if (currentStock == null) {
-                            log.warn("[Streams] FAILED: SKU {} not found for Order {}.", skuCode, orderNumber);
-                            resultEvent = new OrderFailedEvent(orderNumber, "SKU " + skuCode + " not found.");
-
-                        } else if (currentStock >= requestedQuantity) {
-                            store.put(skuCode, currentStock - requestedQuantity);
-                            log.info("[Streams] SUCCESS: Stock reduced for {}. Order {}. New stock: {}",
-                                    skuCode, orderNumber, currentStock - requestedQuantity);
-                            resultEvent = new OrderValidatedEvent(orderNumber);
-
-                        } else {
-                            log.warn("[Streams] FAILED: Not enough stock for {}. Order {}. Requested: {}, Stock: {}",
-                                    skuCode, orderNumber, requestedQuantity, currentStock);
-                            resultEvent = new OrderFailedEvent(orderNumber, "Not enough stock for " + skuCode);
-                        }
-
-                        // Gửi kết quả (thành công hoặc thất bại) ra luồng tiếp theo
-                        context.forward(record.withValue(resultEvent));
-                    }
-
-                    @Override
-                    public void close() {}
-                },
-                INVENTORY_STORE_NAME
-        );
-
-        // --- BƯỚC 4: CHIA TÁCH VÀ GỬI KẾT QUẢ ---
-        Map<String, KStream<String, Object>> branchedStreams = validationResultStream
-                .split(Named.as("validation-branch-"))
-                .branch((key, value) -> value instanceof OrderValidatedEvent, Branched.as("success"))
-                .branch((key, value) -> value instanceof OrderFailedEvent, Branched.as("failed"))
-                .noDefaultBranch();
-
-        branchedStreams.get("validation-branch-success")
-                .mapValues(value -> (OrderValidatedEvent) value)
-                .to("order-validated-topic", Produced.with(Serdes.String(), orderValidatedSerde));
-
-        branchedStreams.get("validation-branch-failed")
-                .mapValues(value -> (OrderFailedEvent) value)
-                .to("order-failed-topic", Produced.with(Serdes.String(), orderFailedSerde));
-
-        return null;
+    private void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (Exception ignored) {
+        }
     }
 }

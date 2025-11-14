@@ -23,18 +23,18 @@ import java.util.List;
 @RequestMapping("/api/user")
 @RequiredArgsConstructor
 public class UserController {
-    private final UserService userService; // TIÊM SERVICE
+    private final UserService userService;
 
-//  ĐẦU VÀO: Dùng DTO Request
+    // ✅ Cho phép đăng ký public (không cần token)
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public UserResponse createUser(@RequestBody UserRequest userRequest) {
         return userService.createUser(userRequest);
     }
 
-    // User tự cập nhật
+    // ✅ User có thể tự cập nhật thông tin của chính mình
     @PatchMapping("/me")
-    @PreAuthorize("hasRole('user')")
+    @PreAuthorize("hasRole('USER')")
     public ResponseEntity<UserResponse> updateSelf(Authentication authentication,
                                                    @RequestBody UserRequest req) {
         Jwt jwt = (Jwt) authentication.getPrincipal();
@@ -42,29 +42,36 @@ public class UserController {
         return ResponseEntity.ok(userService.updateSelfUser(keycloakId, req));
     }
 
-    // Admin cập nhật user
+    // ✅ Admin cập nhật trạng thái user
     @PatchMapping("/admin/{id}/status")
     @PreAuthorize("hasRole('ADMIN')")
-    public UserResponse  updateUserStatus(@PathVariable Long id, @RequestBody AdminUpdateUserRequest request) {
+    public UserResponse updateUserStatus(@PathVariable Long id,
+                                         @RequestBody AdminUpdateUserRequest request) {
         return userService.updateUserByAdmin(id, request.isEnabled());
     }
 
+    // ✅ Chỉ admin mới xem danh sách người dùng
     @GetMapping
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.OK)
-    public List<UserResponse> getAllUsers(){
+    public List<UserResponse> getAllUsers() {
         return userService.getAllUsers();
     }
 
-//@PathVariable trích xuất (lấy) giá trị từ một "biến" nằm trên chính đường dẫn URL.
+    // ✅ Chỉ admin mới xem thông tin người khác
     @GetMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.OK)
-    public UserResponse getUserById(@PathVariable Long id){
+    public UserResponse getUserById(@PathVariable Long id) {
         return userService.getUserById(id);
     }
 
+    // ✅ Chỉ admin được quyền xóa
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.OK)
-    public void deleteUserById(@PathVariable Long id){
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteUserById(@PathVariable Long id) {
         userService.deleteUserById(id);
     }
 }
+

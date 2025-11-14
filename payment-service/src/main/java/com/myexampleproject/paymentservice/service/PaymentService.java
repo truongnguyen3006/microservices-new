@@ -1,8 +1,6 @@
 package com.myexampleproject.paymentservice.service;
 
-import com.myexampleproject.paymentservice.event.OrderValidatedEvent;
-import com.myexampleproject.paymentservice.event.PaymentFailedEvent;
-import com.myexampleproject.paymentservice.event.PaymentProcessedEvent;
+import com.myexampleproject.common.event.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -17,7 +15,11 @@ import java.util.UUID;
 public class PaymentService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
     // Listener để nhận sự kiện từ Inventory Service
-    @KafkaListener(topics = "order-validated-topic", groupId = "payment-group")
+    @KafkaListener(
+            topics = "order-validated-topic",
+            groupId = "payment-group",
+            containerFactory = "paymentKafkaListenerContainerFactory"
+    )
     public void handleOrderValidation(OrderValidatedEvent orderValidatedEvent) {
         log.info("Received OrderValidatedEvent for Order {}. Processing payment...",
                 orderValidatedEvent.getOrderNumber());

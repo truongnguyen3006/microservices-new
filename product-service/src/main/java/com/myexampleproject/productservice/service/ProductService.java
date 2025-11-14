@@ -2,7 +2,7 @@ package com.myexampleproject.productservice.service;
 
 import java.util.List;
 
-import com.myexampleproject.productservice.event.ProductCreatedEvent;
+import com.myexampleproject.common.event.*;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.kafka.core.KafkaTemplate;

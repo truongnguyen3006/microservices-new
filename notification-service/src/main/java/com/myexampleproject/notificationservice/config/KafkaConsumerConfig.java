@@ -1,8 +1,6 @@
 package com.myexampleproject.notificationservice.config;
 
-import com.myexampleproject.notificationservice.event.OrderPlacedEvent;
-import com.myexampleproject.notificationservice.event.PaymentFailedEvent;
-import com.myexampleproject.notificationservice.event.PaymentProcessedEvent;
+import com.myexampleproject.common.event.*;
 import io.confluent.kafka.serializers.json.KafkaJsonSchemaDeserializer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;

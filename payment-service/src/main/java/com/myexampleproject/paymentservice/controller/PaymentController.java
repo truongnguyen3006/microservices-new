@@ -1,6 +1,6 @@
 package com.myexampleproject.paymentservice.controller;
 
-import com.myexampleproject.paymentservice.event.OrderValidatedEvent;
+import com.myexampleproject.common.event.*;
 import com.myexampleproject.paymentservice.service.PaymentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -1,8 +1,6 @@
 package com.myexampleproject.notificationservice.service;
 
-import com.myexampleproject.notificationservice.event.OrderPlacedEvent;
-import com.myexampleproject.notificationservice.event.PaymentFailedEvent;
-import com.myexampleproject.notificationservice.event.PaymentProcessedEvent;
+import com.myexampleproject.common.event.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
