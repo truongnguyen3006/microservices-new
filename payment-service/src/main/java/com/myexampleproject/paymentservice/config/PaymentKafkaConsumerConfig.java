@@ -63,7 +63,7 @@ public class PaymentKafkaConsumerConfig {
 
         factory.setConsumerFactory(paymentConsumerFactory());
         factory.setConcurrency(3);
-        factory.setBatchListener(false); // <-- Dòng này ĐÚNG (vì listener của bạn nhận 1 object)
+        factory.setBatchListener(true);
 
         return factory;
     }

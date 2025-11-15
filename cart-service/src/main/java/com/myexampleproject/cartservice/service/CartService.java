@@ -10,6 +10,8 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.*;
@@ -27,6 +29,8 @@ public class CartService {
     private static final String REDIS_CART_PREFIX = "cart:";
     private static final Duration REDIS_TTL = Duration.ofHours(24);
     private static final String CHECKOUT_TOPIC = "cart-checkout-topic";
+    // THÊM: Định nghĩa Group ID cho listener dọn dẹp
+    private static final String CART_CLEANER_GROUP_ID = "cart-cleaner-group";
 
     public CartEntity getCartFromCacheOrDb(String userId) {
         String key = REDIS_CART_PREFIX + userId;
@@ -83,10 +87,11 @@ public class CartService {
         return getCartFromCacheOrDb(userId);
     }
 
-    @Transactional
     public void checkout(String userId) {
-        // read from DB (single source of truth)
-        CartEntity cart = cartRepository.findById(userId).orElse(null);
+        // 2. SỬA: Đọc từ cache/DB (dùng hàm viewCart)
+        // (Không cần đọc từ DB, dùng hàm viewCart đã tối ưu cache)
+        CartEntity cart = this.viewCart(userId);
+
         if (cart == null || cart.getItems().isEmpty()) {
             throw new IllegalStateException("Cart empty");
         }
@@ -105,9 +110,35 @@ public class CartService {
                 log.info("Checkout event sent for user {} partition={}", userId, md.getRecordMetadata().partition());
             }
         });
+    }
 
-        // remove cart (write-through)
-        cartRepository.deleteById(userId);
-        redisTemplate.delete(REDIS_CART_PREFIX + userId);
+    // THÊM MỚI: KAFKA LISTENER ĐỂ DỌN DẸP
+    // ==========================================================
+
+    /**
+     * Listener này chạy bất đồng bộ, lắng nghe chính topic "cart-checkout-topic"
+     * nhưng với một group-id khác.
+     * Nhiệm vụ của nó là dọn dẹp CSDL và Redis sau khi user đã checkout.
+     */
+    @KafkaListener(topics = CHECKOUT_TOPIC, groupId = CART_CLEANER_GROUP_ID)
+    @Transactional // <-- Thêm @Transactional vào đây
+    public void handleCheckoutCleanup(CartCheckoutEvent event) {
+        String userId = event.getUserId();
+        log.info("CLEANUP: Bắt đầu dọn dẹp giỏ hàng cho user {}", userId);
+
+        try {
+            // 1. Xóa trong CSDL (Source of truth)
+            cartRepository.deleteById(userId);
+
+            // 2. Xóa trong Redis cache
+            redisTemplate.delete(REDIS_CART_PREFIX + userId);
+
+            log.info("CLEANUP: Đã dọn dẹp giỏ hàng (DB & Redis) cho user {}", userId);
+
+        } catch (Exception e) {
+            log.error("CLEANUP FAILED: Lỗi khi dọn dẹp giỏ hàng cho user {}: {}", userId, e.getMessage(), e);
+            // Ném lại lỗi để cơ chế retry của Kafka (nếu có) hoạt động
+            throw e;
+        }
     }
 }

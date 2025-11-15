@@ -1,12 +1,15 @@
 package com.myexampleproject.paymentservice.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myexampleproject.common.event.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -14,37 +17,59 @@ import java.util.UUID;
 @Slf4j
 public class PaymentService {
     private final KafkaTemplate<String, Object> kafkaTemplate;
+    private final ObjectMapper objectMapper;
     // Listener để nhận sự kiện từ Inventory Service
     @KafkaListener(
             topics = "order-validated-topic",
             groupId = "payment-group",
             containerFactory = "paymentKafkaListenerContainerFactory"
     )
-    public void handleOrderValidation(OrderValidatedEvent orderValidatedEvent) {
-        log.info("Received OrderValidatedEvent for Order {}. Processing payment...",
-                orderValidatedEvent.getOrderNumber());
+    public void handleOrderValidation(List<ConsumerRecord<String, Object>> records) {
+        log.info("Received batch of {} validated events", records.size());
 
-        // --- GIẢ LẬP XỬ LÝ THANH TOÁN ---
-        boolean paymentSuccess = processPayment(orderValidatedEvent); //
-        if (paymentSuccess) {
-            // Thanh toán thành công -> Gửi PaymentProcessedEvent
-            String paymentId = UUID.randomUUID().toString(); // Tạo ID thanh toán giả
-            PaymentProcessedEvent successEvent = new PaymentProcessedEvent(
-                    orderValidatedEvent.getOrderNumber(),
-                    paymentId
-            );
-            kafkaTemplate.send("payment-processed-topic", orderValidatedEvent.getOrderNumber(), successEvent); // Gửi tới topic mới
-            log.info("Payment SUCCESS for Order {}. Payment ID: {}",
-                    orderValidatedEvent.getOrderNumber(), paymentId);
-        } else {
-            // Thanh toán thất bại -> Gửi PaymentFailedEvent
-            PaymentFailedEvent failedEvent = new PaymentFailedEvent(
-                    orderValidatedEvent.getOrderNumber(),
-                    "Payment gateway declined." // Lý do giả lập
-            );
-            kafkaTemplate.send("payment-failed-topic",orderValidatedEvent.getOrderNumber(), failedEvent); // Gửi tới topic mới
-            log.warn("Payment FAILED for Order {}. Reason: {}",
-                    orderValidatedEvent.getOrderNumber(), failedEvent.getReason());
+        for (ConsumerRecord<String, Object> record : records) {
+            try {
+                // 1. Convert từ record.value() sang object
+                OrderValidatedEvent event = objectMapper.convertValue(record.value(), OrderValidatedEvent.class);
+
+                // 2. SỬA LỖI: Dùng biến 'event'
+                log.info("Received OrderValidatedEvent for Order {}. Processing payment...",
+                        event.getOrderNumber());
+
+                // 3. SỬA LỖI: Dùng biến 'event'
+                boolean paymentSuccess = processPayment(event);
+                if (paymentSuccess) {
+                    String paymentId = UUID.randomUUID().toString();
+
+                    // 4. SỬA LỖI: Dùng biến 'event'
+                    PaymentProcessedEvent successEvent = new PaymentProcessedEvent(
+                            event.getOrderNumber(),
+                            paymentId
+                    );
+
+                    // 5. SỬA LỖI: Dùng biến 'event'
+                    kafkaTemplate.send("payment-processed-topic", event.getOrderNumber(), successEvent);
+
+                    // 6. SỬA LỖI: Dùng biến 'event'
+                    log.info("Payment SUCCESS for Order {}. Payment ID: {}",
+                            event.getOrderNumber(), paymentId);
+                } else {
+                    // 7. SỬA LỖI: Dùng biến 'event'
+                    PaymentFailedEvent failedEvent = new PaymentFailedEvent(
+                            event.getOrderNumber(),
+                            "Payment gateway declined."
+                    );
+
+                    // 8. SỬA LỖI: Dùng biến 'event'
+                    kafkaTemplate.send("payment-failed-topic", event.getOrderNumber(), failedEvent);
+
+                    // 9. SỬA LỖI: Dùng biến 'event'
+                    log.warn("Payment FAILED for Order {}. Reason: {}",
+                            event.getOrderNumber(), failedEvent.getReason());
+                }
+            } catch (Exception e) {
+                log.error("Lỗi xử lý payment cho key {}: {}", record.key(), e.getMessage(), e);
+            }
         }
     }
 
