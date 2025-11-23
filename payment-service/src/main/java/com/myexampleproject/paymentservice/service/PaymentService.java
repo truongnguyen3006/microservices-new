@@ -76,6 +76,6 @@ public class PaymentService {
     private boolean processPayment(OrderValidatedEvent event) {
         log.info("Simulating payment processing for Order {}...", event.getOrderNumber());
         // Thêm logic phức tạp hơn nếu muốn (ví dụ: random thành công/thất bại)
-        return true; // Luôn trả về thành công cho đơn giản
+        return false; // Luôn trả về thành công cho đơn giản
     }
 }

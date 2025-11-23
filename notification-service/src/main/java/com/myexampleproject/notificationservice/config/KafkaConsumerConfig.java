@@ -75,4 +75,19 @@ public class KafkaConsumerConfig {
         factory.setConsumerFactory(paymentFailedConsumerFactory());
         return factory;
     }
+
+    @Bean
+    public ConsumerFactory<String, OrderFailedEvent> orderFailedConsumerFactory() {
+        Map<String, Object> props = baseProps();
+        props.put("json.value.type", OrderFailedEvent.class.getName());
+        return new DefaultKafkaConsumerFactory<>(props);
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, OrderFailedEvent> orderFailedKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, OrderFailedEvent> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(orderFailedConsumerFactory());
+        return factory;
+    }
 }

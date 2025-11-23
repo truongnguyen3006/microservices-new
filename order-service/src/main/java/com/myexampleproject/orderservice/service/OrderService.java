@@ -11,6 +11,7 @@ import com.myexampleproject.common.dto.OrderLineItemRequest;
 import com.myexampleproject.common.event.*;
 import com.myexampleproject.orderservice.config.CartMapper;
 import com.myexampleproject.orderservice.dto.OrderResponse;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -32,11 +33,18 @@ import com.myexampleproject.orderservice.model.OrderLineItems;
 import com.myexampleproject.orderservice.repository.OrderRepository;
 
 import lombok.RequiredArgsConstructor;
+import io.micrometer.core.instrument.Counter; // <-- THÊM IMPORT NÀY
+import io.micrometer.core.instrument.MeterRegistry; // <-- THÊM IMPORT NÀY
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class OrderService {
+
+    private  Counter ordersCompletedCounter;
+    private  Counter ordersFailedCounter;
+    // Inject thêm cái này để dùng trong @PostConstruct
+    private final MeterRegistry meterRegistry;
 
     private final OrderRepository orderRepository;
     private final KafkaTemplate<String, Object> kafkaTemplate;
@@ -47,22 +55,36 @@ public class OrderService {
     private static final String SAGA_PREFIX = "saga:order:";
     private static final String PRODUCT_CACHE_KEY = "products:cache";
 
+    //Viết hàm này vì dùng @RequiredArgsConstructor với biến không có final , Counter
+    @PostConstruct
+    public void initMetrics() {
+        this.ordersCompletedCounter = Counter.builder("orders_processed_total")
+                .tag("status", "completed")
+                .description("Total successful orders")
+                .register(meterRegistry);
+
+        this.ordersFailedCounter = Counter.builder("orders_processed_total")
+                .tag("status", "failed")
+                .description("Total failed orders")
+                .register(meterRegistry);
+    }
+
     public void placeOrder(OrderRequest orderRequest, String userId) {
         String orderNumber = UUID.randomUUID().toString();
         log.info("Order {} received. Starting Inventory SAGA...", orderNumber);
 
         List<OrderLineItemRequest> items = orderRequest.getItems();
 
-        // 1. Ghi lại "ý định" (intent) của Saga vào Redis
-        // Chúng ta cần biết mình đang chờ bao nhiêu phản hồi
-        Map<String, Object> sagaState = Map.of(
-                "totalItems", items.size(),
-                "receivedItems", 0,
-                "failed", false,
-                "request", orderRequest // Lưu lại request gốc
-        );
-        redisTemplate.opsForHash().putAll(SAGA_PREFIX + orderNumber, sagaState);
-        redisTemplate.expire(SAGA_PREFIX + orderNumber, Duration.ofMinutes(10));
+//        // 1. Ghi lại "ý định" (intent) của Saga vào Redis
+//        // Chúng ta cần biết mình đang chờ bao nhiêu phản hồi
+//        Map<String, Object> sagaState = Map.of(
+//                "totalItems", items.size(),
+//                "receivedItems", 0,
+//                "failed", false,
+//                "request", orderRequest // Lưu lại request gốc
+//        );
+//        redisTemplate.opsForHash().putAll(SAGA_PREFIX + orderNumber, sagaState);
+//        redisTemplate.expire(SAGA_PREFIX + orderNumber, Duration.ofMinutes(10));
 
         // 2. Gửi sự kiện "OrderPlaced" (để lưu vào DB)
         // (Chúng ta vẫn cần làm việc này)
@@ -70,15 +92,16 @@ public class OrderService {
         kafkaTemplate.send("order-placed-topic", orderNumber, placedEvent);
 
         // 3. Gửi N tin nhắn "Kiểm tra kho" (Key-by-SKU)
-        for (OrderLineItemRequest item : items) {
-            InventoryCheckRequest checkRequest = new InventoryCheckRequest(orderNumber, item);
-
-            // GỬI VỚI KEY LÀ SKUCODE
-            kafkaTemplate.send("inventory-check-request-topic", item.getSkuCode(), checkRequest);
-        }
+//        for (OrderLineItemRequest item : items) {
+//            InventoryCheckRequest checkRequest = new InventoryCheckRequest(orderNumber, item);
+//
+//            // GỬI VỚI KEY LÀ SKUCODE
+//            kafkaTemplate.send("inventory-check-request-topic", item.getSkuCode(), checkRequest);
+//        }
 
         log.info("SAGA for Order {} started. {} check requests sent.", orderNumber, items.size());
         // Hàm này trả về HTTP 200 OK ngay lập tức.
+
     }
 
     // SAGA LISTENER: Lắng nghe kết quả từ Inventory
@@ -248,6 +271,8 @@ public class OrderService {
             topics = {
                     "order-placed-topic",
                     "order-failed-topic",
+                    "payment-processed-topic",
+                    "payment-failed-topic"
             },
             containerFactory = "kafkaListenerContainerFactory" // <-- Dùng factory chung
     )
@@ -296,25 +321,6 @@ public class OrderService {
         return objectMapper.convertValue(payload, clazz);
     }
 
-
-    @KafkaListener(
-            topics = "payment-validated-topic",
-            groupId = "order-group",
-            containerFactory = "kafkaListenerContainerFactory"
-    )
-    public void handleValidatedPayment(List<ConsumerRecord<String, Object>> records) {
-        for (ConsumerRecord<String, Object> rec : records) {
-            try {
-                Object payload = rec.value(); // <-- LẤY GIÁ TRỊ
-                PaymentProcessedEvent event =
-                        objectMapper.convertValue(payload, PaymentProcessedEvent.class);
-                handlePaymentSuccess(event);
-            } catch (Exception e) {
-                log.error("❌ Error converting/processing PaymentValidatedEvent at {}: {}",
-                        rec.topic() + "-" + rec.partition() + "@" + rec.offset(), e.getMessage(), e);
-            }
-        }
-    }
 
     @Transactional
     protected void handleOrderPlacement(OrderPlacedEvent event) {
@@ -371,6 +377,27 @@ public class OrderService {
         orderRepository.save(order);
         log.info("Async Save: Order {} saved to database.", event.getOrderNumber());
 
+        List<OrderLineItemRequest> items = event.getOrderLineItemsDtoList(); // Lấy từ event
+        String orderNumber = event.getOrderNumber();
+
+        // A. Lưu state vào Redis
+        Map<String, Object> sagaState = Map.of(
+                "totalItems", items.size(),
+                "receivedItems", 0,
+                "failed", false,
+                "request", new OrderRequest(items) // Tái tạo lại object request để lưu
+        );
+        redisTemplate.opsForHash().putAll(SAGA_PREFIX + orderNumber, sagaState);
+        redisTemplate.expire(SAGA_PREFIX + orderNumber, Duration.ofMinutes(10));
+
+        // B. Gửi yêu cầu kiểm tra kho
+        for (OrderLineItemRequest item : items) {
+            InventoryCheckRequest checkRequest = new InventoryCheckRequest(orderNumber, item);
+            kafkaTemplate.send("inventory-check-request-topic", item.getSkuCode(), checkRequest);
+        }
+
+        log.info("SAGA started for persisted Order {}. Check requests sent.", orderNumber);
+
         OrderStatusEvent statusEvent = new OrderStatusEvent(event.getOrderNumber(), "PENDING");
         kafkaTemplate.send("order-status-topic", event.getOrderNumber(), statusEvent);
     }
@@ -402,7 +429,7 @@ public class OrderService {
             log.warn("Order {} status updated to FAILED due to inventory issue.", order.getOrderNumber());
             kafkaTemplate.send("order-status-topic", order.getOrderNumber(),
                     new OrderStatusEvent(order.getOrderNumber(), order.getStatus()));
-
+            this.ordersFailedCounter.increment();
         } else {
             log.warn("Received failure event for order {} but status was not PENDING (Status: {}).",
                     order.getOrderNumber(), order.getStatus());
@@ -418,12 +445,13 @@ public class OrderService {
         Order order = orderRepository.findByOrderNumber(paymentProcessedEvent.getOrderNumber())
                 .orElseThrow(() -> new RuntimeException("Order not found: " + paymentProcessedEvent.getOrderNumber()));
 
-        if ("PENDING".equals(order.getStatus())) {
+        if ("PENDING".equals(order.getStatus()) || "VALIDATED".equals(order.getStatus())) {
             order.setStatus("COMPLETED");
             orderRepository.save(order);
             log.info("Order {} status updated to COMPLETED.", order.getOrderNumber());
             kafkaTemplate.send("order-status-topic", order.getOrderNumber(),
                     new OrderStatusEvent(order.getOrderNumber(), order.getStatus()));
+            this.ordersCompletedCounter.increment();
         } else {
             log.warn("Received payment success for order {} but status was not PENDING (Status: {}).",
                     order.getOrderNumber(), order.getStatus());
@@ -434,13 +462,30 @@ public class OrderService {
     protected void handlePaymentFailure(PaymentFailedEvent paymentFailedEvent) {
         log.warn("FAILED: Received PaymentFailedEvent for Order {}. Reason: {}. Updating status...",
                 paymentFailedEvent.getOrderNumber(), paymentFailedEvent.getReason());
-
-        Order order = orderRepository.findByOrderNumber(paymentFailedEvent.getOrderNumber())
+//        Dùng hàm "...WithItems" thay vì hàm find thường
+        Order order = orderRepository.findByOrderNumberWithItems(paymentFailedEvent.getOrderNumber())
                 .orElseThrow(() -> new RuntimeException("Order not found: " + paymentFailedEvent.getOrderNumber()));
 
-        if ("PENDING".equals(order.getStatus())) {
+        if ("PENDING".equals(order.getStatus()) || "VALIDATED".equals(order.getStatus())) {
             order.setStatus("PAYMENT_FAILED");
             orderRepository.save(order);
+
+            // logic bù trừ kho
+            List<OrderLineItems> items = order.getOrderLineItemsList();
+            for (OrderLineItems item : items) {
+                // Tạo sự kiện điều chỉnh kho (Cộng lại số lượng đã trừ)
+                InventoryAdjustmentEvent adjustmentEvent = InventoryAdjustmentEvent.builder()
+                        .skuCode(item.getSkuCode())
+                        .adjustmentQuantity(item.getQuantity()) // Số dương: Cộng lại vào kho
+                        .reason("COMPENSATION: Payment Failed for Order " + order.getOrderNumber())
+                        .build();
+
+                // Gửi sang Inventory Service qua Kafka
+                kafkaTemplate.send("inventory-adjustment-topic", item.getSkuCode(), adjustmentEvent);
+
+                log.info("COMPENSATION: Sent restock request for SKU {} (+{})", item.getSkuCode(), item.getQuantity());
+            }
+
             log.warn("Order {} status updated to PAYMENT_FAILED.", order.getOrderNumber());
             kafkaTemplate.send("order-status-topic", order.getOrderNumber(),
                     new OrderStatusEvent(order.getOrderNumber(), order.getStatus()));

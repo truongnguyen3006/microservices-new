@@ -20,6 +20,10 @@ public class SecurityConfig {
 
                 // 2. Yêu cầu TẤT CẢ request phải được xác thực
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/actuator/**").permitAll()
+                        .requestMatchers("/v3/api-docs/**").permitAll()
+                        .requestMatchers("/swagger-ui/**").permitAll()
+                        .requestMatchers("/swagger-ui.html").permitAll()
                         .anyRequest().authenticated() // <-- BẮT BUỘC TẤT CẢ
                 )
 

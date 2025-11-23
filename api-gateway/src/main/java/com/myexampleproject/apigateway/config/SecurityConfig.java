@@ -48,6 +48,10 @@ public class SecurityConfig {
         http.csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(ex -> ex
                         .pathMatchers("/eureka/**").permitAll()
+                        // ✅ Cho phép đăng ký & đăng nhập không cần token
+                        .pathMatchers("/auth/**").permitAll()
+                        // Cho phép Actuator (cho Prometheus)
+                        .pathMatchers("/actuator/**").permitAll()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
 

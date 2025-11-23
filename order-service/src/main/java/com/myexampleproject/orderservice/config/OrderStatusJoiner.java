@@ -54,7 +54,8 @@ public class OrderStatusJoiner {
                         log.warn("BỎ QUA PaymentProcessedEvent: Order {} chưa có trong order-status-topic", payment.getOrderNumber());
                         return null;
                     }
-                    if (!"PENDING".equals(status.getStatus())) {
+                    String currentStatus = status.getStatus();
+                    if (!"PENDING".equals(currentStatus) && !"VALIDATED".equals(currentStatus)) {
                         log.warn("BỎ QUA PaymentProcessedEvent: Order {} không ở trạng thái PENDING (status={})",
                                 payment.getOrderNumber(), status.getStatus());
                         return null;
