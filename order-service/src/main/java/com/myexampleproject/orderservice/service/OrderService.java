@@ -271,7 +271,8 @@ public class OrderService {
             topics = {
                     "order-placed-topic",
                     "order-failed-topic",
-                    "payment-processed-topic"
+                    "payment-processed-topic",
+                    "payment-failed-topic"
             },
             containerFactory = "kafkaListenerContainerFactory" // <-- Dùng factory chung
     )
@@ -320,25 +321,6 @@ public class OrderService {
         return objectMapper.convertValue(payload, clazz);
     }
 
-
-//    @KafkaListener(
-//            topics = "payment-validated-topic",
-//            groupId = "order-group",
-//            containerFactory = "kafkaListenerContainerFactory"
-//    )
-//    public void handleValidatedPayment(List<ConsumerRecord<String, Object>> records) {
-//        for (ConsumerRecord<String, Object> rec : records) {
-//            try {
-//                Object payload = rec.value(); // <-- LẤY GIÁ TRỊ
-//                PaymentProcessedEvent event =
-//                        objectMapper.convertValue(payload, PaymentProcessedEvent.class);
-//                handlePaymentSuccess(event);
-//            } catch (Exception e) {
-//                log.error("❌ Error converting/processing PaymentValidatedEvent at {}: {}",
-//                        rec.topic() + "-" + rec.partition() + "@" + rec.offset(), e.getMessage(), e);
-//            }
-//        }
-//    }
 
     @Transactional
     protected void handleOrderPlacement(OrderPlacedEvent event) {
@@ -480,13 +462,30 @@ public class OrderService {
     protected void handlePaymentFailure(PaymentFailedEvent paymentFailedEvent) {
         log.warn("FAILED: Received PaymentFailedEvent for Order {}. Reason: {}. Updating status...",
                 paymentFailedEvent.getOrderNumber(), paymentFailedEvent.getReason());
-
-        Order order = orderRepository.findByOrderNumber(paymentFailedEvent.getOrderNumber())
+//        Dùng hàm "...WithItems" thay vì hàm find thường
+        Order order = orderRepository.findByOrderNumberWithItems(paymentFailedEvent.getOrderNumber())
                 .orElseThrow(() -> new RuntimeException("Order not found: " + paymentFailedEvent.getOrderNumber()));
 
-        if ("PENDING".equals(order.getStatus())) {
+        if ("PENDING".equals(order.getStatus()) || "VALIDATED".equals(order.getStatus())) {
             order.setStatus("PAYMENT_FAILED");
             orderRepository.save(order);
+
+            // logic bù trừ kho
+            List<OrderLineItems> items = order.getOrderLineItemsList();
+            for (OrderLineItems item : items) {
+                // Tạo sự kiện điều chỉnh kho (Cộng lại số lượng đã trừ)
+                InventoryAdjustmentEvent adjustmentEvent = InventoryAdjustmentEvent.builder()
+                        .skuCode(item.getSkuCode())
+                        .adjustmentQuantity(item.getQuantity()) // Số dương: Cộng lại vào kho
+                        .reason("COMPENSATION: Payment Failed for Order " + order.getOrderNumber())
+                        .build();
+
+                // Gửi sang Inventory Service qua Kafka
+                kafkaTemplate.send("inventory-adjustment-topic", item.getSkuCode(), adjustmentEvent);
+
+                log.info("COMPENSATION: Sent restock request for SKU {} (+{})", item.getSkuCode(), item.getQuantity());
+            }
+
             log.warn("Order {} status updated to PAYMENT_FAILED.", order.getOrderNumber());
             kafkaTemplate.send("order-status-topic", order.getOrderNumber(),
                     new OrderStatusEvent(order.getOrderNumber(), order.getStatus()));

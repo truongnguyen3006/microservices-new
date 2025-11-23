@@ -13,6 +13,7 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/ws/**").permitAll()
                         .requestMatchers("/actuator/**").permitAll() // Mở cửa cho Prometheus
                         .anyRequest().permitAll() // Hoặc mở hết nếu service này không cần bảo mật
                 );
