@@ -1,4 +1,5 @@
 0
-2
-inventory-check-request-topic 1 2472
-inventory-streams-v11-product-repartition-by-sku-repartition 1 11
+3
+inventory-streams-v11-adjust-repartition-by-sku-repartition 1 4
+inventory-check-request-topic 1 57542
+inventory-streams-v11-product-repartition-by-sku-repartition 1 37

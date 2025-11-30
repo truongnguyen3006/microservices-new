@@ -69,112 +69,98 @@ public class OrderService {
                 .register(meterRegistry);
     }
 
-    public void placeOrder(OrderRequest orderRequest, String userId) {
+    public String placeOrder(OrderRequest orderRequest, String userId) {
         String orderNumber = UUID.randomUUID().toString();
         log.info("Order {} received. Starting Inventory SAGA...", orderNumber);
 
         List<OrderLineItemRequest> items = orderRequest.getItems();
 
-//        // 1. Ghi lại "ý định" (intent) của Saga vào Redis
-//        // Chúng ta cần biết mình đang chờ bao nhiêu phản hồi
-//        Map<String, Object> sagaState = Map.of(
-//                "totalItems", items.size(),
-//                "receivedItems", 0,
-//                "failed", false,
-//                "request", orderRequest // Lưu lại request gốc
-//        );
-//        redisTemplate.opsForHash().putAll(SAGA_PREFIX + orderNumber, sagaState);
-//        redisTemplate.expire(SAGA_PREFIX + orderNumber, Duration.ofMinutes(10));
-
-        // 2. Gửi sự kiện "OrderPlaced" (để lưu vào DB)
-        // (Chúng ta vẫn cần làm việc này)
         OrderPlacedEvent placedEvent = new OrderPlacedEvent(orderNumber, userId, items);
         kafkaTemplate.send("order-placed-topic", orderNumber, placedEvent);
-
-        // 3. Gửi N tin nhắn "Kiểm tra kho" (Key-by-SKU)
-//        for (OrderLineItemRequest item : items) {
-//            InventoryCheckRequest checkRequest = new InventoryCheckRequest(orderNumber, item);
-//
-//            // GỬI VỚI KEY LÀ SKUCODE
-//            kafkaTemplate.send("inventory-check-request-topic", item.getSkuCode(), checkRequest);
-//        }
-
-        log.info("SAGA for Order {} started. {} check requests sent.", orderNumber, items.size());
-        // Hàm này trả về HTTP 200 OK ngay lập tức.
-
+        return orderNumber;
     }
 
-    // SAGA LISTENER: Lắng nghe kết quả từ Inventory
     // ==========================================================
-
+    // SAGA LISTENER: Xử lý kết quả kiểm kê (ĐÃ SỬA LỖI 2 ITEMS)
+    // ==========================================================
     @KafkaListener(topics = "inventory-check-result-topic", groupId = "order-saga-group")
-    public void handleInventoryCheckResult(List<ConsumerRecord<String, Object>> records) { // <-- SỬA 1: Nhận List
+    public void handleInventoryCheckResult(List<ConsumerRecord<String, Object>> records) {
         log.info("SAGA: Received batch of {} inventory results", records.size());
 
-        for (ConsumerRecord<String, Object> record : records) { // <-- SỬA 2: Thêm vòng lặp
+        for (ConsumerRecord<String, Object> record : records) {
             try {
-                // SỬA 3: Deserialization thủ công
                 Object payload = record.value();
                 InventoryCheckResult result = objectMapper.convertValue(payload, InventoryCheckResult.class);
 
-                // --- (Logic cũ của bạn bắt đầu từ đây) ---
                 String orderNumber = result.getOrderNumber();
                 String sagaKey = SAGA_PREFIX + orderNumber;
 
-                log.info("SAGA: Processing inventory result for Order {}: SKU {} -> {}",
+                log.info("SAGA: Result for Order {}, SKU {}: Success={}",
                         orderNumber, result.getItem().getSkuCode(), result.isSuccess());
 
-                // Lấy state (Lưu ý: opsForHash() là an toàn, không cần @Transactional)
-                long receivedCount = redisTemplate.opsForHash().increment(sagaKey, "receivedItems", 1);
+                // 1. Tăng biến đếm (Atomic Increment)
+                // Lệnh này an toàn kể cả khi key chưa có (nó sẽ tạo mới và set = 1)
+                Long receivedCount = redisTemplate.opsForHash().increment(sagaKey, "receivedItems", 1);
 
-                // Lấy trạng thái FAILED (nếu có)
+                // 2. Kiểm tra xem đã fail trước đó chưa
                 Object failedState = redisTemplate.opsForHash().get(sagaKey, "failed");
-                boolean alreadyFailed = (failedState != null) && (boolean) failedState;
+                boolean alreadyFailed = (failedState != null) && (Boolean) failedState;
 
-                // Nếu saga đã thất bại, chỉ cần bỏ qua các tin nhắn thành công còn lại
                 if (alreadyFailed) {
-                    log.warn("SAGA: Ignoring result for already failed order {}", orderNumber);
-                    continue; // <-- SỬA 4: Dùng 'continue'
-                }
-
-                // Nếu item này thất bại
-                if (!result.isSuccess()) {
-                    redisTemplate.opsForHash().put(sagaKey, "failed", true);
-                    // Gửi sự kiện Order FAILED (lý do đầu tiên)
-                    kafkaTemplate.send("order-failed-topic", orderNumber, new OrderFailedEvent(orderNumber, result.getReason()));
-
-                    // (Trong một hệ thống thật, chúng ta sẽ gửi lệnh "hoàn trả" ở đây)
-                    continue; // <-- SỬA 5: Dùng 'continue'
-                }
-
-                // Kiểm tra xem đã nhận đủ kết quả chưa
-                Object totalObj = redisTemplate.opsForHash().get(sagaKey, "totalItems");
-                if (totalObj == null) {
-                    log.error("SAGA: Không tìm thấy state 'totalItems' cho order {}. Bỏ qua.", orderNumber);
+                    log.info("SAGA: Order {} already marked failed. Ignoring.", orderNumber);
                     continue;
                 }
-                int totalItems = (int) totalObj;
+
+                // 3. Nếu item này thất bại
+                if (!result.isSuccess()) {
+                    log.warn("SAGA: Inventory check FAILED for Order {}, SKU {}. Reason: {}",
+                            orderNumber, result.getItem().getSkuCode(), result.getReason());
+
+                    redisTemplate.opsForHash().put(sagaKey, "failed", true);
+                    kafkaTemplate.send("order-failed-topic", orderNumber, new OrderFailedEvent(orderNumber, result.getReason()));
+                    continue;
+                }
+
+                // 4. Kiểm tra tổng số items (SỬA LỖI CASTING TẠI ĐÂY)
+                Object totalObj = redisTemplate.opsForHash().get(sagaKey, "totalItems");
+                if (totalObj == null) {
+                    // Có thể do Redis hết hạn hoặc race condition cực hiếm
+                    log.warn("SAGA: State missing for order {}. Waiting...", orderNumber);
+                    continue;
+                }
+
+                // Helper để chuyển đổi số an toàn (tránh ClassCastException Long vs Integer)
+                int totalItems = parseIntegerSafely(totalObj);
+
+                log.debug("SAGA: Order {} progress: {}/{}", orderNumber, receivedCount, totalItems);
 
                 if (receivedCount == totalItems) {
-                    // Đã nhận đủ VÀ không có cái nào FAILED
-                    log.info("SAGA: Order {} is fully validated.", orderNumber);
+                    log.info("SAGA COMPLETE: Order {} passed all inventory checks.", orderNumber);
 
-                    // Gửi sự kiện Order VALIDATED
                     Object requestObj = redisTemplate.opsForHash().get(sagaKey, "request");
                     OrderRequest originalRequest = objectMapper.convertValue(requestObj, OrderRequest.class);
 
                     kafkaTemplate.send("order-validated-topic", orderNumber,
                             new OrderValidatedEvent(orderNumber, originalRequest.getItems()));
 
-                    // Xóa Saga state
                     redisTemplate.delete(sagaKey);
                 }
-                // --- (Logic cũ của bạn kết thúc) ---
 
             } catch (Exception e) {
-                log.error("SAGA: LỖI KHI XỬ LÝ InventoryCheckResult: {}. Sẽ KHÔNG retry.", record.key(), e);
+                log.error("SAGA ERROR: Key: {}", record.key(), e);
             }
         }
+    }
+    // --- HELPER METHOD AN TOÀN ---
+    private int parseIntegerSafely(Object obj) {
+        if (obj instanceof Integer) {
+            return (Integer) obj;
+        } else if (obj instanceof Long) {
+            return ((Long) obj).intValue();
+        } else if (obj instanceof String) {
+            return Integer.parseInt((String) obj);
+        }
+        throw new IllegalArgumentException("Cannot cast " + obj.getClass() + " to int");
     }
 
     // Dùng 1 group-id riêng cho việc xây dựng cache
@@ -410,7 +396,7 @@ public class OrderService {
 
         // Lấy giá và tên từ cache (Snapshot)
         orderLineItems.setPrice(productInfo.getPrice());
-        // orderLineItems.setProductName(productInfo.getName()); // Bạn nên thêm trường này vào Entity
+        orderLineItems.setProductName(productInfo.getName()); // Bạn nên thêm trường này vào Entity
 
         return orderLineItems;
     }

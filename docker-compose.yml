@@ -261,6 +261,19 @@ services:
     networks:
       - micro_net
 
+    # Service Nginx
+  nginx:
+    image: nginx:latest
+    container_name: nginx-lb
+    ports:
+      - "8000:80" # Mở cổng 80 ra ngoài
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro # Mount file config vào
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # Bắt buộc cho Linux (Windows Docker Desktop tự có, nhưng thêm vào cho chắc)
+    networks:
+      - micro_net
+
 
 #  api-gateway:
 #    image: truongnguyen3006/api-gateway:latest

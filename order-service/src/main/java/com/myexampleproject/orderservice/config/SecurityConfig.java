@@ -2,6 +2,7 @@ package com.myexampleproject.orderservice.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -24,6 +25,8 @@ public class SecurityConfig {
                         .requestMatchers("/v3/api-docs/**").permitAll()
                         .requestMatchers("/swagger-ui/**").permitAll()
                         .requestMatchers("/swagger-ui.html").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/order/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/order").authenticated()
                         .anyRequest().authenticated() // <-- BẮT BUỘC TẤT CẢ
                 )
 

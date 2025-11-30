@@ -1,8 +1,10 @@
 package com.myexampleproject.notificationservice.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myexampleproject.common.event.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -16,6 +18,7 @@ import java.util.Map;
 public class NotificationService {
     // Inject template để gửi WebSocket
     private final SimpMessagingTemplate messagingTemplate;
+    private final ObjectMapper objectMapper;
 
     @KafkaListener(
             topics = "order-placed-topic",
@@ -43,28 +46,47 @@ public class NotificationService {
                 Map.of("status", "COMPLETED", "message", "Thanh toán thành công! Đơn hàng hoàn tất."));
     }
 
-    // --- 3. KHI CÓ LỖI (Hết hàng hoặc Lỗi thanh toán) ---
-    // Gộp chung handleOrderFailed và PaymentFailed lại cho gọn
-    @KafkaListener(topics = {
-            "order-failed-topic",
-            "payment-failed-topic"},
-            groupId = "notification-group")
-    public void handleFailures(@Payload Object event) {
-        String orderNumber = "";
-        String reason = "";
+    // SỬA HÀM NÀY: Nhận ConsumerRecord thay vì @Payload Object
+    @KafkaListener(topics = "order-failed-topic", groupId = "notification-group")
+    public void handleOrderFailed(ConsumerRecord<String, String> record) { // Nhận String thô
+        try {
+            String json = cleanJson(record.value()); // Làm sạch chuỗi JSON
+            OrderFailedEvent event = objectMapper.readValue(json, OrderFailedEvent.class);
 
-        if (event instanceof OrderFailedEvent) {
-            orderNumber = ((OrderFailedEvent) event).getOrderNumber();
-            reason = ((OrderFailedEvent) event).getReason();
-        } else if (event instanceof PaymentFailedEvent) {
-            orderNumber = ((PaymentFailedEvent) event).getOrderNumber();
-            reason = ((PaymentFailedEvent) event).getReason();
+            log.warn("Notification: Inventory Failed for Order {}", event.getOrderNumber());
+
+            messagingTemplate.convertAndSend("/topic/order/" + event.getOrderNumber(),
+                    Map.of("status", "FAILED", "message", "Hết hàng: " + event.getReason()));
+        } catch (Exception e) {
+            log.error("Lỗi parse OrderFailedEvent: {}", e.getMessage());
         }
+    }
 
-        log.warn("Order Failed Notification for {}: {}", orderNumber, reason);
+    // SỬA HÀM NÀY: Nhận ConsumerRecord thay vì @Payload Object
+    @KafkaListener(topics = "payment-failed-topic", groupId = "notification-group")
+    public void handlePaymentFailed(ConsumerRecord<String, String> record) { // Nhận String thô
+        try {
+            String json = cleanJson(record.value()); // Làm sạch chuỗi JSON
+            PaymentFailedEvent event = objectMapper.readValue(json, PaymentFailedEvent.class);
 
-        // Gửi thông báo lỗi xuống Frontend
-        messagingTemplate.convertAndSend("/topic/order/" + orderNumber,
-                Map.of("status", "FAILED", "message", "Đơn hàng thất bại: " + reason));
+            log.warn("Notification: Payment Failed for Order {}", event.getOrderNumber());
+
+            messagingTemplate.convertAndSend("/topic/order/" + event.getOrderNumber(),
+                    Map.of("status", "PAYMENT_FAILED", "message", "Thanh toán lỗi: " + event.getReason()));
+        } catch (Exception e) {
+            log.error("Lỗi parse PaymentFailedEvent: {}", e.getMessage());
+        }
+    }
+
+    // --- HÀM PHỤ TRỢ: Lọc bỏ "Magic Bytes" của Kafka Schema Registry ---
+    private String cleanJson(String raw) {
+        if (raw == null) return "";
+        // Tìm vị trí dấu mở ngoặc nhọn đầu tiên '{'
+        int jsonStart = raw.indexOf("{");
+        if (jsonStart != -1) {
+            // Cắt bỏ phần rác phía trước
+            return raw.substring(jsonStart);
+        }
+        return raw;
     }
 }

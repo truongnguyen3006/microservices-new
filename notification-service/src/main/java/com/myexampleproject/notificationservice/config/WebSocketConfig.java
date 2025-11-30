@@ -14,7 +14,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         // Frontend sẽ kết nối vào đường dẫn này: http://localhost:8087/ws
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*") // Cho phép Frontend (React/Vue) kết nối
+                .setAllowedOriginPatterns("http://localhost:3001", "*")
                 .withSockJS(); // Hỗ trợ fallback nếu trình duyệt không có WebSocket
     }
 

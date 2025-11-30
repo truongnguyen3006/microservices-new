@@ -18,8 +18,10 @@ import com.myexampleproject.orderservice.dto.OrderRequest;
 import com.myexampleproject.orderservice.service.OrderService;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.security.Principal;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/order")
@@ -32,13 +34,19 @@ public class OrderController {
     // --- PHƯƠNG THỨC POST (Bạn đã có) ---
     @PostMapping
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public String placeOrder(@RequestBody OrderRequest orderRequest, Principal principal) {
-        log.info("Placing Order (Event-Driven Mode)");
-        // LẤY userId TỪ PRINCIPAL
-        // principal.getName() sẽ trả về "subject" (ID) của user trong Keycloak
+    public Map<String, String> placeOrder(@RequestBody OrderRequest orderRequest, Principal principal) {
+        log.info("Placing Order...");
+
+//        String userId = (principal != null) ? principal.getName() : "user_test_01";
+//        Bắt buộc phải có Principal (User đã login)
+        if (principal == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bạn cần đăng nhập để đặt hàng");
+        }
+        // Lấy ID thật từ Token
         String userId = principal.getName();
-        orderService.placeOrder(orderRequest, userId);
-        return "Order Received! Your order is being processed.";
+        String orderNumber = orderService.placeOrder(orderRequest, userId);
+        // Trả về JSON: { "orderNumber": "uuid-..." }
+        return Map.of("orderNumber", orderNumber, "message", "Order Received");
     }
 
     // ==========================================================

@@ -23,6 +23,9 @@ public class SecurityConfig {
                         // Cho phép bất kỳ ai cũng có thể XEM (GET) sản phẩm
                         .requestMatchers(HttpMethod.GET, "/api/product/**").permitAll()
                         // Bắt buộc tất cả các request khác (POST, DELETE) phải xác thực
+                        // Các API khác (Tạo/Sửa/Xóa) vẫn yêu cầu đăng nhập (ADMIN)
+                        .requestMatchers(HttpMethod.POST, "/api/product").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/api/product/**").authenticated()
                         .anyRequest().authenticated()
                 )
 

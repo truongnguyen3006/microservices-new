@@ -1,6 +1,7 @@
 package com.myexampleproject.userservice.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.myexampleproject.userservice.dto.LoginRequest;
 import com.myexampleproject.userservice.dto.UserRequest;
 import com.myexampleproject.userservice.dto.UserResponse;
 import com.myexampleproject.userservice.service.KeycloakService;
@@ -52,7 +53,7 @@ public class AuthController {
     // Login bằng username + password
     @PostMapping("/login")
     @ResponseStatus(HttpStatus.CREATED)
-    public ResponseEntity<?> login(@RequestParam String username, @RequestParam String password) {
+    public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest) {
         WebClient client = getWebClient();
         JsonNode response = client.post()
                 .uri("/token")
@@ -60,8 +61,8 @@ public class AuthController {
                 .body(BodyInserters.fromFormData("grant_type", "password")
                         .with("client_id", keycloakClientId)
                         .with("client_secret", keycloakClientSecret)
-                        .with("username", username)
-                        .with("password", password))
+                        .with("username", loginRequest.getUsername())
+                        .with("password", loginRequest.getPassword()))
                 .retrieve()
                 .bodyToMono(JsonNode.class)
                 .block();
