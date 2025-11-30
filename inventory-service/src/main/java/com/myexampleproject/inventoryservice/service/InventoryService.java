@@ -85,7 +85,7 @@ public class InventoryService {
      */
     public Integer waitForUpdatedQuantity(String sku) {
 
-        for (int attempt = 1; attempt <= 20; attempt++) {
+        for (int attempt = 1; attempt <= 10; attempt++) {
 
             try {
                 // 1. Lấy KafkaStreams từ factory
@@ -115,10 +115,10 @@ public class InventoryService {
                 // -> Bỏ qua, sleep và lặp lại
             }
 
-            sleep(200);
+            sleep(50);
         }
 
-        return null; // không có update sau 20 lần thử
+        return null; // không có update sau 10 lần thử
     }
 
     private void sleep(long ms) {

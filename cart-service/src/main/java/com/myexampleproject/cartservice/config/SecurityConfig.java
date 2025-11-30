@@ -14,6 +14,7 @@ public class SecurityConfig {
         http.csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/**").permitAll() // Mở cửa cho Prometheus
+                        .requestMatchers("/api/cart/**").permitAll()
                         .anyRequest().permitAll() // Hoặc mở hết nếu service này không cần bảo mật
                 );
         return http.build();

@@ -21,7 +21,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/actuator/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/inventory/adjust").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.GET, "/api/inventory/**").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/inventory/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth2 -> oauth2

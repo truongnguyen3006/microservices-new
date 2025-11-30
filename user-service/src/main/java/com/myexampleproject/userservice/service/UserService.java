@@ -45,6 +45,14 @@ public class UserService {
         return mapToUserResponse(user);
     }
 
+    // ✅ HÀM MỚI: Lấy thông tin user để trả về cho API /me
+    public UserResponse getUserByKeycloakId(String keycloakId) {
+        User user = userRepository.findByKeycloakId(keycloakId)
+                .orElseThrow(() -> new RuntimeException("User not found with Keycloak ID: " + keycloakId));
+
+        return mapToUserResponse(user);
+    }
+
     //    Người dùng tự cập nhật
     public UserResponse updateSelfUser(String keycloakId, UserRequest request) {
         User user = userRepository.findByKeycloakId(keycloakId)

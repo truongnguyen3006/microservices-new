@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
@@ -40,6 +41,18 @@ public class UserController {
         Jwt jwt = (Jwt) authentication.getPrincipal();
         String keycloakId = jwt.getClaim("sub");
         return ResponseEntity.ok(userService.updateSelfUser(keycloakId, req));
+    }
+
+    // ✅ API lấy thông tin người dùng hiện tại (Dựa trên Token gửi lên)
+    @GetMapping("/me")
+    @ResponseStatus(HttpStatus.OK)
+    public UserResponse getCurrentUser(@AuthenticationPrincipal Jwt jwt) {
+        // Lấy keycloakId từ token ("sub" là standard claim chứa ID)
+        String keycloakId = jwt.getClaimAsString("sub");
+
+        // Tìm trong DB và trả về
+        // (Lưu ý: Bạn cần thêm hàm findByKeycloakId vào UserRepository nếu chưa có)
+        return userService.getUserByKeycloakId(keycloakId);
     }
 
     // ✅ Admin cập nhật trạng thái user

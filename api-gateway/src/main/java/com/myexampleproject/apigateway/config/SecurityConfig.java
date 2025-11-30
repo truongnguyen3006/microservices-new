@@ -2,6 +2,7 @@ package com.myexampleproject.apigateway.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
@@ -50,8 +51,14 @@ public class SecurityConfig {
                         .pathMatchers("/eureka/**").permitAll()
                         // ✅ Cho phép đăng ký & đăng nhập không cần token
                         .pathMatchers("/auth/**").permitAll()
+
                         // Cho phép Actuator (cho Prometheus)
                         .pathMatchers("/actuator/**").permitAll()
+                        // --- THÊM DÒNG NÀY (Cho phép đi qua Gateway để lấy sản phẩm) ---
+                        .pathMatchers(HttpMethod.GET, "/api/product/**").permitAll()
+                        .pathMatchers(HttpMethod.GET, "/api/inventory/**").permitAll()
+                        .pathMatchers(HttpMethod.GET, "/api/order/**").permitAll()
+                        .pathMatchers(HttpMethod.POST, "/api/order").authenticated()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
 
