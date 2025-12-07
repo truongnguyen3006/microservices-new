@@ -54,16 +54,21 @@ public class ProductController {
 
     // Trong ProductController.java
 
-    @GetMapping("/admin/warm-cache") // Endpoint tạm thời
-    public String warmProductCache() {
-        log.info("Starting FULL cache warm-up (Order + Inventory)...");
+    // Trong ProductController.java
 
+    @GetMapping("/admin/warm-cache")
+    public String warmProductCache() {
+        log.info("Starting FULL cache warm-up...");
+
+        // 1. QUAN TRỌNG: Xóa cache cũ của chính Product Service để Frontend thấy dữ liệu mới
+        productService.clearProductListCache();
+
+        // 2. Logic cũ (Gửi Kafka cho các service khác) giữ nguyên
         List<Product> allProducts = productRepository.findAll();
         int count = 0;
 
         for (Product product : allProducts) {
-
-            // SỬA 1: Gửi sự kiện cho OrderService Cache (Như cũ)
+            // Gửi Event cập nhật giá cho Order Service
             ProductCacheEvent cacheEvent = ProductCacheEvent.builder()
                     .skuCode(product.getSkuCode())
                     .name(product.getName())
@@ -72,19 +77,16 @@ public class ProductController {
                     .build();
             kafkaTemplate.send("product-cache-update-topic", product.getSkuCode(), cacheEvent);
 
-            // SỬA 2: GỬI SỰ KIỆN CHO INVENTORY KTABLE (Cái bị thiếu)
-            // (Giả sử số lượng tồn kho ban đầu là 1000 cho sản phẩm cũ)
+            // Gửi Event cập nhật kho cho Inventory Service
             ProductCreatedEvent inventoryEvent = ProductCreatedEvent.builder()
                     .skuCode(product.getSkuCode())
-                    .initialQuantity(1000) // <-- Set một số lượng tồn kho
+                    .initialQuantity(1000)
                     .build();
             kafkaTemplate.send("product-created-topic", product.getSkuCode(), inventoryEvent);
 
             count++;
         }
 
-        String message = "Cache warm-up complete. Sent " + count + " products (x2 events each).";
-        log.info(message);
-        return message;
+        return "Đã xóa cache cũ và gửi " + count + " sản phẩm sang Kafka.";
     }
 }

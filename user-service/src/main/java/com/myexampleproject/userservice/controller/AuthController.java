@@ -2,6 +2,7 @@ package com.myexampleproject.userservice.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.myexampleproject.userservice.dto.LoginRequest;
+import com.myexampleproject.userservice.dto.TokenRefreshRequest;
 import com.myexampleproject.userservice.dto.UserRequest;
 import com.myexampleproject.userservice.dto.UserResponse;
 import com.myexampleproject.userservice.service.KeycloakService;
@@ -15,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 @RestController
 @RequestMapping("/auth")
@@ -72,20 +74,29 @@ public class AuthController {
 
     // Refresh token khi hết hạn
     @PostMapping("/refresh")
-    @ResponseStatus(HttpStatus.CREATED)
-    public ResponseEntity<JsonNode> refreshToken(@RequestParam String refresh_token) {
-        WebClient client = getWebClient();
-        JsonNode response = client.post()
-                .uri("/token")
-                .body(BodyInserters.fromFormData("grant_type", "refresh_token")
-                        .with("client_id", keycloakClientId)
-                        .with("client_secret", keycloakClientSecret)
-                        .with("refresh_token", refresh_token))
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .block();
+    public ResponseEntity<?> refreshToken(@RequestBody TokenRefreshRequest request) {
+        try {
+            WebClient client = getWebClient();
+            JsonNode response = client.post()
+                    .uri("/token")
+                    .body(BodyInserters.fromFormData("grant_type", "refresh_token")
+                            .with("client_id", keycloakClientId)
+                            .with("client_secret", keycloakClientSecret)
+                            .with("refresh_token", request.getRefreshToken()))
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block(); // <--- Chỗ này ném lỗi nếu token hết hạn
 
-        return ResponseEntity.ok(response);
+            return ResponseEntity.ok(response);
+        } catch (WebClientResponseException e) {
+            // 🔥 QUAN TRỌNG: In lỗi ra Console của IntelliJ/Eclipse
+            System.err.println("---- LỖI TỪ KEYCLOAK ----");
+            System.err.println("Status: " + e.getStatusCode());
+            System.err.println("Body: " + e.getResponseBodyAsString());
+            System.err.println("-------------------------");
+
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(e.getResponseBodyAsString());
+        }
     }
 
     // Đăng xuất (xóa refresh token)

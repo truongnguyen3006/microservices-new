@@ -26,6 +26,14 @@ public class ProductService {
     private final KafkaTemplate<String, ProductCreatedEvent> productCreatedKafka;
     private final KafkaTemplate<String, ProductCacheEvent> productCacheKafka;
 
+    // Trong ProductService.java
+
+    // Hàm này sẽ xóa sạch cache "products_json_v5"
+    @CacheEvict(cacheNames = "products_json_v5", allEntries = true)
+    public void clearProductListCache() {
+        log.info("Đã xóa cache danh sách sản phẩm (products_json_v5)");
+    }
+
     // Đổi tên cache sang _v5 cho sạch sẽ
     @CacheEvict(cacheNames = "products_json_v5", allEntries = true)
     public ProductResponse createProduct(ProductRequest productRequest) {
@@ -93,6 +101,7 @@ public class ProductService {
                 .name(product.getName())
                 .description(product.getDescription())
                 .price(product.getPrice())
+                .category(product.getCategory())
                 .skuCode(product.getSkuCode())
                 .imageUrl(product.getImageUrl())
                 .build();
