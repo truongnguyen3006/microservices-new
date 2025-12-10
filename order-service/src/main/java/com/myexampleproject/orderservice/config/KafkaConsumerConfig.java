@@ -2,6 +2,8 @@ package com.myexampleproject.orderservice.config; // đổi theo package của t
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -77,6 +79,11 @@ public class KafkaConsumerConfig {
     public ObjectMapper objectMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        // 2️⃣ BỔ SUNG CẤU HÌNH MỚI (Để sửa lỗi LocalDateTime)
+        mapper.registerModule(new JavaTimeModule());
+
+        // (Tùy chọn) Để ngày giờ hiện ra dạng chuỗi "2025-12-08T..." đẹp mắt thay vì mảng số
+        mapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         return mapper;
     }
 }

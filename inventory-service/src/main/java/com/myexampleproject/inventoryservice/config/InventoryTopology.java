@@ -17,6 +17,13 @@ import org.apache.kafka.streams.state.ValueAndTimestamp; // <-- THÊM IMPORT NÀ
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+// Thêm các import này
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Map;
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -25,6 +32,28 @@ public class InventoryTopology {
     public static final String INVENTORY_STORE = "inventory-store";
 
     private final SerdeConfig serdeConfig;
+
+    // 1. INJECT METER REGISTRY (Lombok sẽ tự tạo constructor cho final field này)
+    private final MeterRegistry meterRegistry;
+    private final Map<String, AtomicInteger> stockGauges = new ConcurrentHashMap<>();
+
+    // Thêm hàm này vào cuối class InventoryTopology
+    private void updateStockMetric(String sku, int newStock) {
+        try {
+            // Tìm Gauge của SKU này, nếu chưa có thì tạo mới
+            AtomicInteger gauge = stockGauges.computeIfAbsent(sku, k -> {
+                return meterRegistry.gauge("inventory_stock_level", Tags.of("sku", k), new AtomicInteger(newStock));
+            });
+
+            // Cập nhật giá trị mới
+            if (gauge != null) {
+                gauge.set(newStock);
+            }
+        } catch (Exception e) {
+            // Chỉ log warning, KHÔNG ném exception để tránh làm rollback transaction Kafka
+            log.warn("Lỗi cập nhật metrics cho SKU {}: {}", sku, e.getMessage());
+        }
+    }
 
     @Autowired
     public void buildTopology(StreamsBuilder builder) {
@@ -115,6 +144,8 @@ public class InventoryTopology {
 
                                     // SỬA 4: Ghi lại (put) cũng phải dùng ValueAndTimestamp
                                     store.put(skuCode, ValueAndTimestamp.make(newStock, context.timestamp()));
+                                    //gọi hàm cập nhật Metrics
+                                    updateStockMetric(skuCode, newStock);
 
                                     log.info("INVENTORY COMMIT (SAGA) → {} ({} → {})", skuCode, currentStock, newStock);
                                     success = true;

@@ -26,6 +26,9 @@ public class OrderLineItems {
 	private Integer quantity;
 
     private String productName;
+    // Thêm 2 trường này để in hóa đơn cho dễ
+    private String color;
+    private String size;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id")

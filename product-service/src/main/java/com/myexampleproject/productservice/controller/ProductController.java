@@ -5,6 +5,7 @@ import java.util.List;
 import com.myexampleproject.common.event.ProductCacheEvent;
 import com.myexampleproject.common.event.ProductCreatedEvent;
 import com.myexampleproject.productservice.model.Product;
+import com.myexampleproject.productservice.model.ProductVariant;
 import com.myexampleproject.productservice.repository.ProductRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -31,6 +32,12 @@ public class ProductController {
 	public ProductResponse createProduct(@RequestBody ProductRequest productRequest) {
         return productService.createProduct(productRequest);
 	}
+
+    @PutMapping("/{id}")
+    @ResponseStatus(HttpStatus.OK)
+    public ProductResponse updateProduct(@PathVariable Long id, @RequestBody ProductRequest productRequest) {
+        return productService.updateProduct(id, productRequest);
+    }
 	
 	@GetMapping
 	@ResponseStatus(HttpStatus.OK)
@@ -54,37 +61,50 @@ public class ProductController {
 
     // Trong ProductController.java
 
-    @GetMapping("/admin/warm-cache") // Endpoint tạm thời
+    @GetMapping("/admin/warm-cache")
     public String warmProductCache() {
-        log.info("Starting FULL cache warm-up (Order + Inventory)...");
+        log.info("Starting FULL cache warm-up (Parent + Variants)...");
+
+        // 1. Xóa cache danh sách cũ
+        productService.clearProductListCache();
 
         List<Product> allProducts = productRepository.findAll();
-        int count = 0;
+        int variantCount = 0;
 
+        // 2. Lặp qua từng Sản phẩm cha
         for (Product product : allProducts) {
 
-            // SỬA 1: Gửi sự kiện cho OrderService Cache (Như cũ)
-            ProductCacheEvent cacheEvent = ProductCacheEvent.builder()
-                    .skuCode(product.getSkuCode())
-                    .name(product.getName())
-                    .price(product.getPrice())
-                    .imageUrl(product.getImageUrl())
-                    .build();
-            kafkaTemplate.send("product-cache-update-topic", product.getSkuCode(), cacheEvent);
+            // Nếu sản phẩm chưa có biến thể nào thì bỏ qua
+            if (product.getVariants() == null || product.getVariants().isEmpty()) {
+                continue;
+            }
 
-            // SỬA 2: GỬI SỰ KIỆN CHO INVENTORY KTABLE (Cái bị thiếu)
-            // (Giả sử số lượng tồn kho ban đầu là 1000 cho sản phẩm cũ)
-            ProductCreatedEvent inventoryEvent = ProductCreatedEvent.builder()
-                    .skuCode(product.getSkuCode())
-                    .initialQuantity(1000) // <-- Set một số lượng tồn kho
-                    .build();
-            kafkaTemplate.send("product-created-topic", product.getSkuCode(), inventoryEvent);
+            // 3. QUAN TRỌNG: Lặp qua từng Biến thể (Variant) để lấy SKU Code
+            for (ProductVariant variant : product.getVariants()) {
 
-            count++;
+                // --- Gửi Event cho Order Service (Redis) ---
+                ProductCacheEvent cacheEvent = ProductCacheEvent.builder()
+                        .skuCode(variant.getSkuCode())      // ✅ LẤY TỪ VARIANT
+                        .name(product.getName())            // Tên lấy từ Cha
+                        .price(variant.getPrice() != null ? variant.getPrice() : product.getBasePrice())
+                        .imageUrl(variant.getImageUrl() != null ? variant.getImageUrl() : product.getImageUrl())
+                        .color(variant.getColor())          // ✅ LẤY TỪ VARIANT
+                        .size(variant.getSize())            // ✅ LẤY TỪ VARIANT
+                        .build();
+
+                kafkaTemplate.send("product-cache-update-topic", variant.getSkuCode(), cacheEvent);
+
+                // --- Gửi Event cho Inventory Service ---
+                ProductCreatedEvent inventoryEvent = ProductCreatedEvent.builder()
+                        .skuCode(variant.getSkuCode())      // ✅ LẤY TỪ VARIANT
+                        .initialQuantity(1000)
+                        .build();
+                kafkaTemplate.send("product-created-topic", variant.getSkuCode(), inventoryEvent);
+
+                variantCount++;
+            }
         }
 
-        String message = "Cache warm-up complete. Sent " + count + " products (x2 events each).";
-        log.info(message);
-        return message;
+        return "Warm-up hoàn tất. Đã gửi event cho " + variantCount + " biến thể (SKU).";
     }
 }

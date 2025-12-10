@@ -20,6 +20,7 @@ public class InventoryService {
      */
     private final StreamsBuilderFactoryBean streamsBuilderFactory;
 
+
     /*
      * XÓA BỎ PHƯƠNG THỨC getKafkaStreams() GÂY LỖI
      */

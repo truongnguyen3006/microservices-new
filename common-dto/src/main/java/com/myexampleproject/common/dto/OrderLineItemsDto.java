@@ -16,4 +16,8 @@ public class OrderLineItemsDto {
 	private String skuCode;
 	private BigDecimal price;
 	private Integer quantity;
+
+    private String productName; // Nên thêm cả tên
+    private String color;
+    private String size;
 }

@@ -1,9 +1,12 @@
 package com.myexampleproject.apigateway.config;
 
+import io.netty.resolver.DefaultAddressResolverGroup;
 import org.springframework.boot.web.embedded.netty.NettyReactiveWebServerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import io.netty.channel.ChannelOption;
+
+import java.time.Duration;
 
 @Configuration
 public class GatewayNettyConfig {

@@ -14,7 +14,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.*;
 
 @Configuration
-public class RedisConfig {
+public class  RedisConfig {
 
     @Bean
     public LettuceConnectionFactory redisConnectionFactory() {
