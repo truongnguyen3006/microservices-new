@@ -21,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.security.Principal;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -57,5 +58,11 @@ public class OrderController {
     public OrderResponse getOrderDetails(@PathVariable String orderNumber) {
         log.info("Fetching order details for orderNumber: {}", orderNumber);
         return orderService.getOrderDetails(orderNumber);
+    }
+
+    @GetMapping
+    @ResponseStatus(HttpStatus.OK)
+    public List<OrderResponse> getAllOrders() {
+        return orderService.getAllOrders();
     }
 }

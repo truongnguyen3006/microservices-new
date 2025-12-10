@@ -9,7 +9,7 @@ import org.hibernate.annotations.UpdateTimestamp;
 import org.springframework.data.annotation.CreatedDate;
 
 @Entity
-@Table(name ="user")
+@Table(name ="t_user")
 @AllArgsConstructor
 //Tự động tạo constructor rỗng.
 @NoArgsConstructor

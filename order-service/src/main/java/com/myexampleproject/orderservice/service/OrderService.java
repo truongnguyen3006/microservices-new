@@ -211,6 +211,8 @@ public class OrderService {
                         .stream()
                         .map(this::mapToOrderLineItemsDto) // Tái sử dụng logic map
                         .toList())
+                .totalPrice(order.getTotalPrice()) // ✅ Map dữ liệu
+                .orderDate(order.getOrderDate())   // ✅ Map dữ liệu
                 .build();
     }
 
@@ -218,12 +220,18 @@ public class OrderService {
      * Helper: Chuyển đổi Entity OrderLineItems -> DTO OrderLineItemsDto.
      * (Đây là logic ngược lại với hàm mapToDto bạn đã có)
      */
-    private OrderLineItemsDto mapToOrderLineItemsDto(OrderLineItems orderLineItems) {
+    // Hàm này được gọi trong getOrderDetails
+    private OrderLineItemsDto mapToOrderLineItemsDto(OrderLineItems entity) {
         return OrderLineItemsDto.builder()
-                .id(orderLineItems.getId()) // Giả sử DTO của bạn cũng có Id
-                .skuCode(orderLineItems.getSkuCode())
-                .price(orderLineItems.getPrice())
-                .quantity(orderLineItems.getQuantity())
+                .id(entity.getId())
+                .skuCode(entity.getSkuCode())
+                .price(entity.getPrice())
+                .quantity(entity.getQuantity())
+
+                // ✅ TRẢ VỀ CHO FRONTEND
+                .productName(entity.getProductName())
+                .color(entity.getColor())
+                .size(entity.getSize())
                 .build();
     }
 
@@ -388,15 +396,19 @@ public class OrderService {
         kafkaTemplate.send("order-status-topic", event.getOrderNumber(), statusEvent);
     }
 
-    // Hàm mới thay thế hàm mapToDto cũ
+    // Hàm này được gọi trong handleOrderPlacement
     private OrderLineItems mapToDtoWithPrice(OrderLineItemRequest itemRequest, ProductCacheEvent productInfo) {
         OrderLineItems orderLineItems = new OrderLineItems();
         orderLineItems.setQuantity(itemRequest.getQuantity());
         orderLineItems.setSkuCode(itemRequest.getSkuCode());
 
-        // Lấy giá và tên từ cache (Snapshot)
+        // Lấy từ Cache (ProductCacheEvent)
         orderLineItems.setPrice(productInfo.getPrice());
-        orderLineItems.setProductName(productInfo.getName()); // Bạn nên thêm trường này vào Entity
+        orderLineItems.setProductName(productInfo.getName());
+
+        // ✅ GÁN GIÁ TRỊ MỚI TỪ CACHE VÀO ENTITY
+        orderLineItems.setColor(productInfo.getColor());
+        orderLineItems.setSize(productInfo.getSize());
 
         return orderLineItems;
     }
@@ -518,6 +530,12 @@ public class OrderService {
         }
     }
 
+    public List<OrderResponse> getAllOrders() {
+        List<Order> orders = orderRepository.findAll();
+        return orders.stream()
+                .map(this::mapToOrderResponse)
+                .toList();
+    }
 
     private OrderLineItems mapToDto(OrderLineItemsDto orderLineItemsDto) {
         OrderLineItems orderLineItems = new OrderLineItems();
