@@ -20,22 +20,13 @@ import java.util.concurrent.ConcurrentHashMap;
 @Configuration
 @EnableWebFluxSecurity
 public class SecurityConfig {
-
-    // ✅ Cache token đã decode (token-level)
     private final Map<String, Mono<Jwt>> tokenCache = new ConcurrentHashMap<>();
-
-    // ✅ Cache decoder-level (key từ Keycloak)
     private final Map<String, CachedDecoder> jwkDecoderCache = new ConcurrentHashMap<>();
-
     @Bean
     public ReactiveJwtDecoder reactiveJwtDecoder() {
         return token -> {
-            // 👉 Key cho cache (Keycloak URI)
             String jwkUri = "http://keycloak:8085/realms/spring-boot-microservices-realm/protocol/openid-connect/certs";
-
             ReactiveJwtDecoder decoder = getCachedDecoder(jwkUri);
-
-            // 👉 Cache từng token decode 10 phút
             return tokenCache.computeIfAbsent(token,
                     t -> Mono.defer(() -> decoder.decode(t))
                             .cache(Duration.ofMinutes(10))
@@ -43,25 +34,19 @@ public class SecurityConfig {
         };
     }
 
-    // ✅ Cấu hình Security chain
     @Bean
     public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
         http.csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(ex -> ex
                         .pathMatchers("/eureka/**").permitAll()
-                        // ✅ Cho phép đăng ký & đăng nhập không cần token
                         .pathMatchers("/auth/**").permitAll()
-
-                        // Cho phép Actuator (cho Prometheus)
                         .pathMatchers("/actuator/**").permitAll()
-                        // --- THÊM DÒNG NÀY (Cho phép đi qua Gateway để lấy sản phẩm) ---
                         .pathMatchers(HttpMethod.GET, "/api/product/**").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/inventory/**").permitAll()
                         .pathMatchers(HttpMethod.GET, "/api/order/**").permitAll()
                         .pathMatchers(HttpMethod.POST, "/api/order").authenticated()
                         .anyExchange().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
-
         return http.build();
     }
 

@@ -86,22 +86,19 @@ public class CartService {
         });
     }
 
-    @Async // <-- QUAN TRỌNG
+    @Async
     public void sendKafkaEvent(CartCheckoutEvent event) {
         String userId = event.getUserId();
         try {
             log.info("ASYNC SEND: Gửi checkout event cho user {}", userId);
-
-            // Lệnh này BÂY GIỜ sẽ block một luồng "Async"
-            // mà không ảnh hưởng đến luồng HTTP
-            kafkaTemplate.send(CHECKOUT_TOPIC, userId, event).whenComplete((md, ex) -> {
+            kafkaTemplate.send(CHECKOUT_TOPIC, userId, event).whenComplete((md,
+                                                                            ex) -> {
                 if (ex != null) {
                     log.error("ASYNC SEND FAILED for user {}: {}", userId, ex.getMessage());
                 } else {
                     log.info("ASYNC SEND SUCCESS for user {}", userId);
                 }
             });
-
         } catch (Exception e) {
             log.error("Lỗi khi gửi Kafka bất đồng bộ: {}", e.getMessage(), e);
         }
@@ -116,25 +113,21 @@ public class CartService {
      * SỬA LẠI HOÀN TOÀN: Dùng HINCRBY để thêm item (Atomic)
      */
     public void addItem(String userId, CartItemRequest line) {
-        // 1. Tra cứu giá (giữ nguyên)
+        // 1. Tra cứu giá
         ProductCacheEvent productInfo = getProductFromCache(line.getSkuCode());
         if (productInfo == null) {
             throw new RuntimeException("Product not found: " + line.getSkuCode());
         }
-
         String qtyKey = REDIS_QTY_HASH_PREFIX + userId;
         String dataKey = REDIS_DATA_HASH_PREFIX + userId;
         String sku = line.getSkuCode();
         Long qty = (long) line.getQuantity(); // HINCRBY dùng Long
-
         // 2. LỆNH NGUYÊN TỬ (ATOMIC)
         // Tăng số lượng trong hash "cart:qty:{userId}"
         redisTemplate.opsForHash().increment(qtyKey, sku, qty);
-
         // 3. Cập nhật snapshot (Tên, Giá, Ảnh) vào hash "cart:data:{userId}"
         // (Chúng ta lưu cả object ProductCacheEvent làm value)
         redisTemplate.opsForHash().put(dataKey, sku, productInfo);
-
         // 4. Đặt thời gian hết hạn (TTL) cho cả 2 key
         redisTemplate.expire(qtyKey, REDIS_TTL);
         redisTemplate.expire(dataKey, REDIS_TTL);

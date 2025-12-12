@@ -10,7 +10,6 @@ import java.time.Duration;
 
 @Configuration
 public class GatewayNettyConfig {
-
     @Bean
     public NettyReactiveWebServerFactory nettyReactiveWebServerFactory() {
         NettyReactiveWebServerFactory factory = new NettyReactiveWebServerFactory();

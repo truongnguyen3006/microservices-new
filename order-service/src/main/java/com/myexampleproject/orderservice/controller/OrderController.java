@@ -32,14 +32,10 @@ public class OrderController {
 
     private final OrderService orderService;
 
-    // --- PHƯƠNG THỨC POST (Bạn đã có) ---
     @PostMapping
     @ResponseStatus(HttpStatus.ACCEPTED)
     public Map<String, String> placeOrder(@RequestBody OrderRequest orderRequest, Principal principal) {
         log.info("Placing Order...");
-
-//        String userId = (principal != null) ? principal.getName() : "user_test_01";
-//        Bắt buộc phải có Principal (User đã login)
         if (principal == null) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Bạn cần đăng nhập để đặt hàng");
         }

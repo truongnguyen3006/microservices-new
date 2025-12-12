@@ -80,20 +80,20 @@ public class InventoryTopology {
                 .stream("inventory-adjustment-topic", Consumed.with(stringSerde, adjustSerde))
                 .mapValues(InventoryAdjustmentEvent::getAdjustmentQuantity)
                 .repartition(Repartitioned.with(stringSerde, intSerde).withName("adjust-repartition-by-sku"));
-
+        // Hợp nhất luồng tạo sản phẩm và luồng điều chỉnh kho
         KStream<String, Integer> inventoryChanges = productStream.merge(adjustStream);
-
         inventoryChanges
                 .groupByKey(Grouped.with(stringSerde, intSerde))
                 .aggregate(
                         () -> 0,
                         (sku, change, currentStock) -> {
+                            // Logic nghiệp vụ: Tính toán tồn kho mới
                             long newStock = (long) currentStock + change;
                             int finalStock = (int) Math.max(0, Math.min(newStock, Integer.MAX_VALUE));
                             log.info("AGGREGATE STOCK → {} ({} + {}) = {}", sku, currentStock, change, finalStock);
                             return finalStock;
                         },
-                        // QUAN TRỌNG: Chúng ta phải dùng Serde<Integer> cho KTable
+                        // Lưu kết quả vào State Store cục bộ (RocksDB) để truy xuất nhanh
                         Materialized.<String, Integer, KeyValueStore<Bytes, byte[]>>as(INVENTORY_STORE)
                                 .withKeySerde(stringSerde)
                                 .withValueSerde(intSerde) // <-- Value là Integer
@@ -121,43 +121,33 @@ public class InventoryTopology {
 
                             @Override
                             public KeyValue<String, InventoryCheckResult> transform(String skuCode, InventoryCheckRequest request) {
-                                // SỬA 2: Đổi kiểu 'item' về đúng DTO (không có 'id')
                                 OrderLineItemRequest item = request.getItem();
                                 String orderNumber = request.getOrderNumber();
                                 String reason = null;
                                 boolean success = false;
-
-                                // SỬA 3: Đọc 'Value' từ 'ValueAndTimestamp'
                                 ValueAndTimestamp<Integer> stockWithTimestamp = store.get(skuCode);
                                 Integer currentStock = (stockWithTimestamp != null) ? stockWithTimestamp.value() : 0;
                                 if (currentStock == null) currentStock = 0;
-
-
                                 if (currentStock < item.getQuantity()) {
-                                    // Thất bại
                                     reason = "Not enough stock for " + skuCode + " (need " + item.getQuantity() + ", have " + currentStock + ")";
                                     log.warn("INVENTORY CHECK FAILED → Order {}: {}", orderNumber, reason);
                                     success = false;
                                 } else {
-                                    // Thành công -> TRỪ KHO NGAY
                                     int newStock = currentStock - item.getQuantity();
-
-                                    // SỬA 4: Ghi lại (put) cũng phải dùng ValueAndTimestamp
                                     store.put(skuCode, ValueAndTimestamp.make(newStock, context.timestamp()));
                                     //gọi hàm cập nhật Metrics
                                     updateStockMetric(skuCode, newStock);
-
                                     log.info("INVENTORY COMMIT (SAGA) → {} ({} → {})", skuCode, currentStock, newStock);
                                     success = true;
                                 }
-
                                 // Gửi kết quả (key=orderNumber)
                                 return KeyValue.pair(
                                         orderNumber,
-                                        // SỬA 5: Dùng 'item' (kiểu OrderLineItemRequest)
                                         new InventoryCheckResult(orderNumber, item, success, reason)
                                 );
                             }
+
+
 
                             @Override
                             public void close() {}

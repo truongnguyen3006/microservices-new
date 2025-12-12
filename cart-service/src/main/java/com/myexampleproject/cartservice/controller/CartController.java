@@ -43,14 +43,12 @@ public class CartController {
 
     @PostMapping("/checkout/{userId}")
     public CompletableFuture<ResponseEntity<String>> checkout(@PathVariable String userId) {
-
         return cartService.checkoutAsync(userId)
                 .thenApply(result -> {
-                    // Trả về 202 Accepted (kiểu ResponseEntity<String>)
+                    // Trả về 202 Accepted
                     return ResponseEntity.accepted().body("Checkout queued");
                 })
                 .exceptionally(ex -> {
-                    // Bắt lỗi (kiểu ResponseEntity<String>)
                     return ResponseEntity.badRequest().body(ex.getMessage());
                 });
     }
